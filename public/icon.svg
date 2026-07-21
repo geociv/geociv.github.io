@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="GeoCiv">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d2334"/>
+      <stop offset="1" stop-color="#06121d"/>
+    </linearGradient>
+    <linearGradient id="hat" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2fc4c4"/>
+      <stop offset="1" stop-color="#14898a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <!-- contornos geo -->
+  <g fill="none" stroke="#1e4763" stroke-width="6" opacity="0.7">
+    <path d="M60 384c60-26 120-26 180 0s120 26 180 0"/>
+    <path d="M60 414c60-26 120-26 180 0s120 26 180 0"/>
+  </g>
+  <!-- casco de obra -->
+  <g transform="translate(256 232)">
+    <path d="M-118 44a118 118 0 0 1 236 0Z" fill="url(#hat)"/>
+    <rect x="-140" y="44" width="280" height="30" rx="15" fill="#c07f3c"/>
+    <rect x="-16" y="-74" width="32" height="60" rx="10" fill="#2fc4c4"/>
+    <path d="M-70 40c0-40 22-74 70-74s70 34 70 74" fill="none" stroke="#0d2334" stroke-width="10" opacity="0.35"/>
+  </g>
+</svg>

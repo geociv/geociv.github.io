@@ -1,0 +1,227 @@
+import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
+import { db } from '../db/database'
+import { SUPABASE_ANON_KEY, SUPABASE_URL, SYNC_CONFIGURED, SYNC_WORKSPACE } from '../config'
+import type { Category, Transaction } from '../db/types'
+
+/**
+ * Sincronización con Supabase. Viene HORNEADA (ver config.ts) — el cliente no
+ * la configura. Estrategia: last-write-wins por `updatedAt`.
+ * - Sondeo (push + pull) al abrir, tras cambios, al volver online y cada 45s.
+ * - Realtime (websocket): aplica al instante los cambios que llegan de otros
+ *   dispositivos, sin esperar al sondeo. Si no está configurada, la app es local.
+ */
+
+const WATERMARK_KEY = 'geociv-sync-watermark'
+
+export type SyncState = 'off' | 'idle' | 'syncing' | 'error'
+
+export interface SyncStatus {
+  state: SyncState
+  lastSync?: string
+  message?: string
+}
+
+let client: SupabaseClient | null = null
+function getClient(): SupabaseClient {
+  if (!client) client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  return client
+}
+
+export function isSyncConfigured(): boolean {
+  return SYNC_CONFIGURED
+}
+
+interface RemoteRow {
+  updatedAt: number
+  [key: string]: unknown
+}
+
+export interface SyncResult {
+  pushed: number
+  pulled: number
+  at: string
+}
+
+let inFlight: Promise<SyncResult> | null = null
+
+export async function syncNow(): Promise<SyncResult> {
+  if (!SYNC_CONFIGURED) throw new Error('Sincronización no configurada.')
+  // Evita solapar dos sincronizaciones
+  if (inFlight) return inFlight
+  inFlight = doSync().finally(() => {
+    inFlight = null
+  })
+  return inFlight
+}
+
+async function doSync(): Promise<SyncResult> {
+  const sb = getClient()
+  const watermark = Number(localStorage.getItem(WATERMARK_KEY) ?? 0)
+  const ws = SYNC_WORKSPACE
+  let pushed = 0
+  let pulled = 0
+
+  // PUSH: lo que cambió localmente desde la última marca
+  const localTx = await db.transactions.where('updatedAt').above(watermark).toArray()
+  const localCat = await db.categories.where('updatedAt').above(watermark).toArray()
+
+  if (localCat.length) {
+    const { error } = await sb.from('categories').upsert(localCat.map((c) => ({ ...c, workspace: ws })))
+    if (error) throw new Error(`Enviar categorías: ${error.message}`)
+    pushed += localCat.length
+  }
+  if (localTx.length) {
+    const { error } = await sb.from('transactions').upsert(localTx.map((t) => ({ ...t, workspace: ws })))
+    if (error) throw new Error(`Enviar movimientos: ${error.message}`)
+    pushed += localTx.length
+  }
+
+  // PULL: lo remoto más nuevo que la marca
+  const { data: remoteCat, error: e2 } = await sb
+    .from('categories')
+    .select('*')
+    .eq('workspace', ws)
+    .gt('updatedAt', watermark)
+  if (e2) throw new Error(`Traer categorías: ${e2.message}`)
+
+  const { data: remoteTx, error: e1 } = await sb
+    .from('transactions')
+    .select('*')
+    .eq('workspace', ws)
+    .gt('updatedAt', watermark)
+  if (e1) throw new Error(`Traer movimientos: ${e1.message}`)
+
+  pulled += await mergeRemote<Category>(remoteCat as RemoteRow[], db.categories)
+  pulled += await mergeRemote<Transaction>(remoteTx as RemoteRow[], db.transactions)
+
+  const now = Date.now()
+  localStorage.setItem(WATERMARK_KEY, String(now))
+  return { pushed, pulled, at: new Date(now).toISOString() }
+}
+
+interface SyncTable<T> {
+  get: (id: string) => Promise<T | undefined>
+  put: (v: T) => Promise<unknown>
+}
+
+/** Aplica una fila remota solo si es más nueva que la local (last-write-wins). */
+async function applyRemoteRow<T extends { id: string; updatedAt: number }>(
+  table: SyncTable<T>,
+  row: RemoteRow,
+): Promise<boolean> {
+  const rest: Record<string, unknown> = { ...row }
+  delete rest.workspace
+  const incoming = rest as unknown as T
+  if (!incoming.id) return false
+  const local = await table.get(incoming.id)
+  if (!local || incoming.updatedAt > local.updatedAt) {
+    await table.put(incoming)
+    return true
+  }
+  return false
+}
+
+async function mergeRemote<T extends { id: string; updatedAt: number }>(
+  rows: RemoteRow[] | null,
+  table: SyncTable<T>,
+): Promise<number> {
+  if (!rows?.length) return 0
+  let n = 0
+  for (const row of rows) {
+    if (await applyRemoteRow(table, row)) n++
+  }
+  return n
+}
+
+// ===== Orquestación automática =====
+
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let notify: (s: SyncStatus) => void = () => {}
+let lastSync: string | undefined
+
+export function onSyncStatus(cb: (s: SyncStatus) => void): void {
+  notify = cb
+  cb({ state: SYNC_CONFIGURED ? 'idle' : 'off', lastSync })
+}
+
+async function runSync(): Promise<void> {
+  if (!SYNC_CONFIGURED || !navigator.onLine) return
+  notify({ state: 'syncing', lastSync })
+  try {
+    const r = await syncNow()
+    lastSync = r.at
+    notify({ state: 'idle', lastSync })
+  } catch (e) {
+    notify({ state: 'error', lastSync, message: (e as Error).message })
+  }
+}
+
+/** Pide una sincronización tras un cambio local (agrupa ráfagas ~1.2s). */
+export function requestSync(): void {
+  if (!SYNC_CONFIGURED) return
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => void runSync(), 1200)
+}
+
+// ===== Realtime (websocket): cambios de otros dispositivos, al instante =====
+
+let channel: RealtimeChannel | null = null
+
+/**
+ * Se suscribe a los cambios remotos (INSERT/UPDATE) de nuestro workspace y los
+ * aplica localmente en cuanto llegan. El borrado es lógico (deleted=true), así
+ * que viaja como UPDATE con la fila completa: se puede aplicar directo.
+ */
+function startRealtime(): () => void {
+  const sb = getClient()
+  const ws = SYNC_WORKSPACE
+  const filter = `workspace=eq.${ws}`
+
+  const apply = async <T extends { id: string; updatedAt: number }>(table: SyncTable<T>, row: unknown) => {
+    const r = row as RemoteRow | undefined
+    if (!r || r.workspace !== ws) return
+    const changed = await applyRemoteRow(table, r)
+    if (changed) {
+      lastSync = new Date().toISOString()
+      notify({ state: 'idle', lastSync })
+    }
+  }
+
+  channel = sb
+    .channel(`geociv-sync-${ws}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'categories', filter }, (p) =>
+      apply(db.categories, p.new),
+    )
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter }, (p) =>
+      apply(db.transactions, p.new),
+    )
+    .subscribe()
+
+  return () => {
+    if (channel) {
+      void sb.removeChannel(channel)
+      channel = null
+    }
+  }
+}
+
+/** Arranca la sincronización automática (sondeo + realtime). Devuelve limpieza. */
+export function startAutoSync(): () => void {
+  if (!SYNC_CONFIGURED) return () => {}
+  void runSync()
+  const stopRealtime = startRealtime()
+  // Sondeo de respaldo por si el websocket se cae (cada 45s)
+  const interval = setInterval(() => void runSync(), 45_000)
+  const onOnline = () => void runSync()
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') void runSync()
+  }
+  window.addEventListener('online', onOnline)
+  document.addEventListener('visibilitychange', onVisible)
+  return () => {
+    clearInterval(interval)
+    stopRealtime()
+    window.removeEventListener('online', onOnline)
+    document.removeEventListener('visibilitychange', onVisible)
+  }
+}

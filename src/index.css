@@ -1,0 +1,129 @@
+@import 'tailwindcss';
+
+/* ===== Identidad de marca GeoCiv (del logo: navy, teal, cobre, plata) ===== */
+@theme {
+  --color-navy-950: #06121d;
+  --color-navy-900: #0a1c2b;
+  --color-navy-850: #0d2334;
+  --color-navy-800: #102a3d;
+  --color-navy-700: #16374f;
+  --color-navy-600: #1e4763;
+
+  --color-teal-400: #2fc4c4;
+  --color-teal-500: #1ba3a3;
+  --color-teal-600: #14898a;
+
+  --color-copper-400: #d99a55;
+  --color-copper-500: #c07f3c;
+  --color-copper-600: #a8682e;
+
+  --color-silver-300: #c3cfd8;
+  --color-silver-400: #9fb0bd;
+
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background: #eef2f5;
+  color: #0d2334;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #06121d;
+    color: #e6edf3;
+  }
+}
+
+/* Áreas seguras del celular (notch / barra inferior) */
+.safe-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* ===== Inputs y selects: legibles y consistentes en claro y oscuro ===== */
+.field {
+  width: 100%;
+  border-radius: 0.625rem;
+  border: 1px solid #d3dbe2;
+  background: #ffffff;
+  color: #0d2334;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field::placeholder {
+  color: #94a3b8;
+}
+.field:focus {
+  border-color: var(--color-teal-500);
+  box-shadow: 0 0 0 3px rgba(27, 163, 163, 0.15);
+}
+/* El desplegable nativo hereda estos colores → opciones legibles */
+select.field {
+  color-scheme: light;
+}
+select.field option {
+  color: #0d2334;
+  background: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .field {
+    background: var(--color-navy-800);
+    border-color: var(--color-navy-600);
+    color: #e6edf3;
+  }
+  .field::placeholder {
+    color: #64798c;
+  }
+  select.field {
+    color-scheme: dark;
+  }
+  select.field option {
+    color: #e6edf3;
+    background: #102a3d;
+  }
+}
+
+/* Superficie de tarjeta reutilizable */
+.card {
+  border-radius: 1rem;
+  background: #ffffff;
+  border: 1px solid #e6ebf0;
+  box-shadow: 0 1px 2px rgba(13, 35, 52, 0.04), 0 1px 3px rgba(13, 35, 52, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  .card {
+    background: var(--color-navy-850);
+    border-color: rgba(255, 255, 255, 0.06);
+    box-shadow: none;
+  }
+}
+
+/* Oculta flechas de inputs numéricos */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+}
