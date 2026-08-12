@@ -1,0 +1,27 @@
+name: Mantener Supabase despierta
+
+# Le hace un ping diario a la base para que el plan gratuito no la pause
+# por inactividad (se pausa tras ~7 días sin requests).
+
+on:
+  schedule:
+    - cron: '23 7 * * *' # todos los días ~07:23 UTC
+    - cron: '23 19 * * *' # y ~19:23 UTC (dos pings por día, por si acaso)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping a la base
+        run: |
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${{ vars.VITE_SUPABASE_URL }}/rest/v1/categories?select=id&limit=1" \
+            -H "apikey: ${{ vars.VITE_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ vars.VITE_SUPABASE_ANON_KEY }}")
+          echo "Respuesta de Supabase: HTTP $CODE"
+          if [ "$CODE" = "200" ]; then
+            echo "Base activa ✓"
+          else
+            echo "::warning::La base respondió $CODE (puede estar pausada/restaurándose)"
+          fi
