@@ -13,7 +13,7 @@ export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenP
 
   // Totales por proyecto (solo cuenta Proyectos)
   const projects = useMemo(() => {
-    if (!allowsIncome) return []
+    if (activeAccount !== 'proyectos') return []
     const sections = sectionsOfAccount(categories, activeAccount)
     return sections
       .map((s) => {
@@ -92,7 +92,7 @@ export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenP
       </button>
 
       {/* Proyectos (solo cuenta Proyectos) */}
-      {allowsIncome && projects.length > 0 && (
+      {activeAccount === 'proyectos' && projects.length > 0 && (
         <div>
           <h2 className="mb-2.5 px-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Proyectos</h2>
           <ul className="space-y-2">

@@ -9,7 +9,7 @@ const PALETTE = ['#2563eb', '#16a34a', '#c026d3', '#dc2626', '#d97706', '#0284c7
 /** Columnas exigidas y opcionales por cuenta. El archivo debe cumplirlas. */
 export const TEMPLATE_SPEC: Record<AccountId, { required: string[]; optional: string[] }> = {
   oficina: {
-    required: ['Fecha', 'Monto', 'Sección'],
+    required: ['Fecha', 'Tipo', 'Monto', 'Sección'],
     optional: ['Subsección', 'Descripción', 'Método', 'Banco', 'Nota'],
   },
   proyectos: {
@@ -58,8 +58,8 @@ export function downloadTemplate(account: AccountId): void {
   const example =
     account === 'oficina'
       ? [
-          { Fecha: '15/01/2026', Monto: 320.5, 'Sección': 'Sueldos', 'Subsección': '', 'Descripción': 'Sueldo enero', 'Método': 'Efectivo', Banco: '', Nota: '' },
-          { Fecha: '18/01/2026', Monto: 45.9, 'Sección': 'Comida', 'Subsección': '', 'Descripción': 'Almuerzo equipo', 'Método': 'Efectivo', Banco: '', Nota: '' },
+          { Fecha: '15/01/2026', Tipo: 'Egreso', Monto: 320.5, 'Sección': 'Sueldos', 'Subsección': '', 'Descripción': 'Sueldo enero', 'Método': 'Efectivo', Banco: '', Nota: '' },
+          { Fecha: '18/01/2026', Tipo: 'Ingreso', Monto: 500, 'Sección': 'Reembolsos', 'Subsección': '', 'Descripción': 'Reembolso caja chica', 'Método': 'Efectivo', Banco: '', Nota: '' },
         ]
       : [
           { Fecha: '15/01/2026', Tipo: 'Ingreso', Monto: 5000, Proyecto: 'Proyecto 1', 'Subsección': 'Anticipos', 'Descripción': 'Anticipo de obra', 'Método': 'Transferencia', Banco: 'Banco Pichincha', Nota: 'F-001' },
@@ -218,8 +218,8 @@ export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = 
     const note = clean(pick(r, ['Nota', 'Observación', 'Note']))
     const bank = clean(pick(r, ['Banco', 'Cooperativa', 'Bank']))
     const paymentMethod = parseMethod(pick(r, ['Método', 'Forma de pago', 'Method']))
-    // Oficina solo maneja gastos; Proyectos exige la columna Tipo
-    const type: TxType | null = account === 'oficina' ? 'expense' : parseType(pick(r, ['Tipo', 'Type']))
+    // Ambas cuentas manejan ingresos y egresos: la columna Tipo es obligatoria
+    const type: TxType | null = parseType(pick(r, ['Tipo', 'Type']))
 
     if (!date) return errors.push({ rowNumber, message: 'Fecha inválida o vacía' })
     if (!isFinite(amount) || amount <= 0) return errors.push({ rowNumber, message: 'Monto inválido, vacío o cero' })
@@ -268,7 +268,7 @@ export async function commitImport(rows: ImportRow[]): Promise<number> {
         id: uid(),
         account: r.account,
         name: r.section,
-        scope: r.account === 'oficina' ? 'expense' : 'both',
+        scope: 'both',
         color: PALETTE[newCats.length % PALETTE.length],
         createdAt: now,
         updatedAt: now,

@@ -13,8 +13,8 @@ export function ReportsView({ projectId, onProjectChange }: Props) {
   const { transactions, categories, settings, account, activeAccount } = useAppData()
 
   const projects = useMemo(
-    () => (account.allowsIncome ? sectionsOfAccount(categories, activeAccount) : []),
-    [categories, activeAccount, account.allowsIncome],
+    () => (activeAccount === 'proyectos' ? sectionsOfAccount(categories, activeAccount) : []),
+    [categories, activeAccount],
   )
 
   const filtered = useMemo(() => {

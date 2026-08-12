@@ -18,7 +18,7 @@ export interface AccountDef {
 
 /** Las dos cuentas del negocio. Misma lógica, libros separados. */
 export const ACCOUNTS: AccountDef[] = [
-  { id: 'oficina', name: 'Oficina', description: 'Registro de gastos de la oficina', allowsIncome: false },
+  { id: 'oficina', name: 'Oficina', description: 'Ingresos y egresos de la oficina', allowsIncome: true },
   { id: 'proyectos', name: 'Proyectos', description: 'Ingresos y egresos por proyecto', allowsIncome: true },
 ]
 
