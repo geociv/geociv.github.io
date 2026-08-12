@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie'
-import { DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, LEGACY_PINS, type Category, type Settings, type Transaction } from './types'
+import { DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, LEGACY_PINS, type Advance, type Category, type Settings, type Transaction } from './types'
 
 /**
  * Base de datos local (IndexedDB) — es la fuente de la verdad.
@@ -9,6 +9,7 @@ import { DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, LEGACY_PINS, type
 export class GeoCivDB extends Dexie {
   transactions!: Table<Transaction, string>
   categories!: Table<Category, string>
+  advances!: Table<Advance, string>
   settings!: Table<Settings, string>
 
   constructor() {
@@ -39,6 +40,13 @@ export class GeoCivDB extends Dexie {
         await tx.table('categories').clear()
         await tx.table('transactions').clear()
       })
+    // v4: adelantos a trabajadores (aparte del balance)
+    this.version(4).stores({
+      transactions: 'id, account, date, type, categoryId, updatedAt, deleted',
+      categories: 'id, account, scope, parentId, updatedAt, deleted',
+      advances: 'id, account, updatedAt, deleted',
+      settings: 'id',
+    })
   }
 }
 

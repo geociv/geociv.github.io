@@ -97,8 +97,8 @@ export function ReportPanel({ transactions, categories, settings, scopeLabel }: 
       )}
 
       {summary.income > 0 && <MethodCard title="Ingresos por método de pago" data={summary.incomeByMethod} money={money} />}
-      {summary.expenseByCategory.length > 0 && <CategoryChart title="Egresos por sección" data={summary.expenseByCategory} money={money} />}
-      {summary.incomeByCategory.length > 0 && <CategoryChart title="Ingresos por sección" data={summary.incomeByCategory} money={money} />}
+      {summary.expenseByCategory.length > 0 && <CategoryChart title="Egresos por sección" data={summary.expenseByCategory} money={money} tone="expense" />}
+      {summary.incomeByCategory.length > 0 && <CategoryChart title="Ingresos por sección" data={summary.incomeByCategory} money={money} tone="income" />}
 
       {summary.count === 0 && <div className="card p-8 text-center text-sm text-slate-400">No hay movimientos en este período.</div>}
 
@@ -189,7 +189,23 @@ interface BreakItem {
   total: number
 }
 
-function CategoryChart({ title, data, money }: { title: string; data: BreakItem[]; money: (n: number) => string }) {
+// Tonos por tipo: egresos en ROJOS, ingresos en VERDES (distintos matices por sección)
+const EXPENSE_SHADES = ['#dc2626', '#ef4444', '#f87171', '#b91c1c', '#fca5a5', '#991b1b']
+const INCOME_SHADES = ['#16a34a', '#22c55e', '#4ade80', '#15803d', '#86efac', '#166534']
+
+function CategoryChart({
+  title,
+  data,
+  money,
+  tone,
+}: {
+  title: string
+  data: BreakItem[]
+  money: (n: number) => string
+  tone: 'income' | 'expense'
+}) {
+  const shades = tone === 'expense' ? EXPENSE_SHADES : INCOME_SHADES
+  const colorAt = (i: number) => shades[i % shades.length]
   return (
     <div className="card p-4">
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</h3>
@@ -197,18 +213,18 @@ function CategoryChart({ title, data, money }: { title: string; data: BreakItem[
         <ResponsiveContainer width="45%" height={140}>
           <PieChart>
             <Pie data={data} dataKey="total" nameKey="name" innerRadius={32} outerRadius={62} paddingAngle={2} isAnimationActive={false}>
-              {data.map((d) => (
-                <Cell key={d.categoryId} fill={d.color} stroke="none" />
+              {data.map((d, i) => (
+                <Cell key={d.categoryId} fill={colorAt(i)} stroke="none" />
               ))}
             </Pie>
             <Tooltip formatter={(v) => money(Number(v))} />
           </PieChart>
         </ResponsiveContainer>
         <ul className="flex-1 space-y-1.5 text-sm">
-          {data.slice(0, 6).map((d) => (
+          {data.slice(0, 6).map((d, i) => (
             <li key={d.categoryId} className="flex items-center justify-between gap-2">
               <span className="flex min-w-0 items-center gap-1.5">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: d.color }} />
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colorAt(i) }} />
                 <span className="truncate text-slate-600 dark:text-silver-300">{d.name}</span>
               </span>
               <span className="shrink-0 font-medium tabular-nums text-slate-500">{money(d.total)}</span>

@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, DEFAULT_SETTINGS, ensureSeed } from '../db/database'
-import { liveCategories, liveTransactions } from '../db/repo'
-import { accountById, DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, type AccountDef, type Category, type Settings, type Transaction } from '../db/types'
+import { liveAdvances, liveCategories, liveTransactions } from '../db/repo'
+import { accountById, DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, type AccountDef, type Advance, type Category, type Settings, type Transaction } from '../db/types'
 
 const ACTIVE_KEY = 'geociv-active-account'
 
@@ -13,6 +13,7 @@ interface AppDataValue {
   /** Filtradas por la cuenta activa. */
   transactions: Transaction[]
   categories: Category[]
+  advances: Advance[]
   settings: Settings
   activeAccount: string
   account: AccountDef
@@ -38,6 +39,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const allTransactions = useLiveQuery(liveTransactions, [], undefined)
   const allCategories = useLiveQuery(liveCategories, [], undefined)
+  const allAdvances = useLiveQuery(liveAdvances, [], undefined)
   const settings = useLiveQuery(() => db.settings.get('app'), [], undefined)
 
   const ready =
@@ -45,15 +47,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const txs = allTransactions ?? []
   const cats = allCategories ?? []
+  const advs = allAdvances ?? []
 
   const transactions = useMemo(() => txs.filter((t) => t.account === activeAccount), [txs, activeAccount])
   const categories = useMemo(() => cats.filter((c) => c.account === activeAccount), [cats, activeAccount])
+  const advances = useMemo(() => advs.filter((a) => a.account === activeAccount), [advs, activeAccount])
 
   const value: AppDataValue = {
     allTransactions: txs,
     allCategories: cats,
     transactions,
     categories,
+    advances,
     settings: settings
       ? {
           ...settings,

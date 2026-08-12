@@ -1,6 +1,6 @@
 import { db, DEFAULT_SETTINGS, uid } from './database'
 import { requestSync } from '../lib/sync'
-import type { AccountId, Category, PaymentMethod, Settings, Transaction, TxType } from './types'
+import type { AccountId, Advance, Category, PaymentMethod, Settings, Transaction, TxType } from './types'
 
 export interface TxInput {
   account: AccountId
@@ -89,6 +89,42 @@ export async function deleteCategory(id: string): Promise<void> {
     await db.categories.update(child.id, { deleted: true, updatedAt: now })
   }
   requestSync()
+}
+
+// ===== Adelantos =====
+
+export interface AdvanceInput {
+  account: AccountId
+  worker: string
+  amount: number
+  date: string
+  note?: string
+}
+
+export async function addAdvance(input: AdvanceInput): Promise<string> {
+  const now = Date.now()
+  const adv: Advance = {
+    id: uid(),
+    ...input,
+    worker: input.worker.trim(),
+    note: input.note?.trim() || undefined,
+    createdAt: now,
+    updatedAt: now,
+    deleted: false,
+  }
+  await db.advances.put(adv)
+  requestSync()
+  return adv.id
+}
+
+/** "Quitar" un adelanto = liquidarlo (borrado lógico). */
+export async function deleteAdvance(id: string): Promise<void> {
+  await db.advances.update(id, { deleted: true, updatedAt: Date.now() })
+  requestSync()
+}
+
+export function liveAdvances() {
+  return db.advances.filter((a) => !a.deleted).toArray()
 }
 
 export async function updateSettings(patch: Partial<Settings>): Promise<void> {

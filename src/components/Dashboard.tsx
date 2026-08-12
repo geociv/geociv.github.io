@@ -1,15 +1,19 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useAppData } from '../state/AppData'
 import { rangeFor, fmtDateShort } from '../lib/dates'
 import { formatMoney } from '../lib/money'
 import { summarize, totalBalance } from '../lib/reports'
 import { categoryPath, rootSectionId, sectionsOfAccount } from '../lib/categories'
 import { IconArrowDown, IconArrowUp, IconChevronRight, IconFolder, IconPlus, IconWallet } from './Icons'
+import { AdvancesSheet } from './AdvancesSheet'
 
 export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenProject: (id: string) => void }) {
-  const { transactions, categories, settings, account, activeAccount } = useAppData()
+  const { transactions, categories, advances, settings, account, activeAccount } = useAppData()
   const money = (n: number) => formatMoney(n, settings)
   const allowsIncome = account.allowsIncome
+  const [showAdvances, setShowAdvances] = useState(false)
+
+  const advancesTotal = useMemo(() => advances.reduce((s, a) => s + a.amount, 0), [advances])
 
   // Totales por proyecto (solo cuenta Proyectos)
   const projects = useMemo(() => {
@@ -67,6 +71,24 @@ export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenP
           <p className="mt-3 text-sm text-silver-400">{transactions.length} movimientos registrados</p>
         )}
       </div>
+
+      {/* Adelantos a trabajadores (no afectan el balance) */}
+      <button
+        onClick={() => setShowAdvances(true)}
+        className="card flex w-full items-center gap-3 p-4 text-left transition hover:ring-2 hover:ring-copper-500/40"
+      >
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-copper-500/15 text-copper-500">
+          <IconWallet width={20} height={20} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-slate-400">Adelantos pendientes</p>
+          <p className="text-lg font-bold tabular-nums text-copper-500">{money(advancesTotal)}</p>
+        </div>
+        <span className="flex items-center gap-1 rounded-lg bg-copper-500/10 px-3 py-1.5 text-xs font-semibold text-copper-500">
+          {advances.length > 0 ? 'Gestionar / Quitar' : 'Registrar'}
+          <IconChevronRight width={14} height={14} />
+        </span>
+      </button>
 
       {/* Hoy y Este mes */}
       <div className="grid grid-cols-2 gap-3">
@@ -167,6 +189,8 @@ export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenP
           </ul>
         )}
       </div>
+
+      {showAdvances && <AdvancesSheet onClose={() => setShowAdvances(false)} />}
     </div>
   )
 }

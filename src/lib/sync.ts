@@ -1,7 +1,7 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
 import { db } from '../db/database'
 import { SUPABASE_ANON_KEY, SUPABASE_URL, SYNC_CONFIGURED, SYNC_WORKSPACE } from '../config'
-import type { Category, Transaction } from '../db/types'
+import type { Advance, Category, Transaction } from '../db/types'
 
 /**
  * Sincronización con Supabase. Viene HORNEADA (ver config.ts) — el cliente no
@@ -56,14 +56,17 @@ export async function syncNow(): Promise<SyncResult> {
 
 async function doSync(): Promise<SyncResult> {
   const sb = getClient()
-  const watermark = Number(localStorage.getItem(WATERMARK_KEY) ?? 0)
+  // Marca SOLO para el push: como usa el reloj local (consistente consigo mismo),
+  // sirve para no reenviar todo. El PULL NO usa marca (traía de menos por relojes
+  // desincronizados entre equipos) — trae todo y fusiona por "el más nuevo gana".
+  const pushWatermark = Number(localStorage.getItem(WATERMARK_KEY) ?? 0)
   const ws = SYNC_WORKSPACE
   let pushed = 0
   let pulled = 0
 
-  // PUSH: lo que cambió localmente desde la última marca
-  const localTx = await db.transactions.where('updatedAt').above(watermark).toArray()
-  const localCat = await db.categories.where('updatedAt').above(watermark).toArray()
+  // PUSH: lo que cambió localmente desde la última marca (reloj local)
+  const localTx = await db.transactions.where('updatedAt').above(pushWatermark).toArray()
+  const localCat = await db.categories.where('updatedAt').above(pushWatermark).toArray()
 
   if (localCat.length) {
     const { error } = await sb.from('categories').upsert(localCat.map((c) => ({ ...c, workspace: ws })))
@@ -76,23 +79,33 @@ async function doSync(): Promise<SyncResult> {
     pushed += localTx.length
   }
 
-  // PULL: lo remoto más nuevo que la marca
-  const { data: remoteCat, error: e2 } = await sb
-    .from('categories')
-    .select('*')
-    .eq('workspace', ws)
-    .gt('updatedAt', watermark)
+  // PULL: TODO lo del workspace (sin filtro de reloj). El merge aplica solo lo
+  // más nuevo, así que es idempotente y barato para el tamaño de estos datos.
+  const { data: remoteCat, error: e2 } = await sb.from('categories').select('*').eq('workspace', ws)
   if (e2) throw new Error(`Traer categorías: ${e2.message}`)
 
-  const { data: remoteTx, error: e1 } = await sb
-    .from('transactions')
-    .select('*')
-    .eq('workspace', ws)
-    .gt('updatedAt', watermark)
+  const { data: remoteTx, error: e1 } = await sb.from('transactions').select('*').eq('workspace', ws)
   if (e1) throw new Error(`Traer movimientos: ${e1.message}`)
 
   pulled += await mergeRemote<Category>(remoteCat as RemoteRow[], db.categories)
   pulled += await mergeRemote<Transaction>(remoteTx as RemoteRow[], db.transactions)
+
+  // ADELANTOS: tolerante a fallos (la tabla en Supabase puede no existir aún).
+  // Si falla, no rompe la sincronización de categorías/movimientos.
+  try {
+    const localAdv = await db.advances.where('updatedAt').above(pushWatermark).toArray()
+    if (localAdv.length) {
+      const { error } = await sb.from('advances').upsert(localAdv.map((a) => ({ ...a, workspace: ws })))
+      if (error) throw new Error(error.message)
+      pushed += localAdv.length
+    }
+    const { data: remoteAdv, error } = await sb.from('advances').select('*').eq('workspace', ws)
+    if (error) throw new Error(error.message)
+    pulled += await mergeRemote<Advance>(remoteAdv as RemoteRow[], db.advances)
+  } catch (e) {
+    // Silencioso: probablemente falta correr el SQL de la tabla `advances`.
+    console.warn('Sync adelantos omitido:', (e as Error).message)
+  }
 
   const now = Date.now()
   localStorage.setItem(WATERMARK_KEY, String(now))
@@ -195,6 +208,9 @@ function startRealtime(): () => void {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter }, (p) =>
       apply(db.transactions, p.new),
     )
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'advances', filter }, (p) =>
+      apply(db.advances, p.new),
+    )
     .subscribe()
 
   return () => {
@@ -210,8 +226,8 @@ export function startAutoSync(): () => void {
   if (!SYNC_CONFIGURED) return () => {}
   void runSync()
   const stopRealtime = startRealtime()
-  // Sondeo de respaldo por si el websocket se cae (cada 45s)
-  const interval = setInterval(() => void runSync(), 45_000)
+  // Sondeo de respaldo por si el websocket se cae (cada 20s)
+  const interval = setInterval(() => void runSync(), 20_000)
   const onOnline = () => void runSync()
   const onVisible = () => {
     if (document.visibilityState === 'visible') void runSync()

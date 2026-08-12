@@ -96,3 +96,22 @@ export const DEFAULT_ADMIN_PIN = 'GeoCiv@Admin2026'
 export const DEFAULT_VIEWER_PIN = 'GeoCiv@Reportes2026'
 /** Claves débiles anteriores; se migran a las nuevas automáticamente. */
 export const LEGACY_PINS = ['1234', '0000']
+
+/**
+ * Adelanto a un trabajador. NO es un ingreso ni egreso: no afecta el balance.
+ * Se lleva aparte como "pendiente" hasta que se quita (se descuenta/liquida).
+ */
+export interface Advance {
+  id: string
+  account: AccountId
+  /** Trabajador que recibió el adelanto. */
+  worker: string
+  amount: number
+  /** Fecha en formato YYYY-MM-DD. */
+  date: string
+  note?: string
+  createdAt: number
+  updatedAt: number
+  /** "Quitar" un adelanto = marcarlo borrado (ya liquidado). */
+  deleted?: boolean
+}
