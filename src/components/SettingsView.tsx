@@ -1,16 +1,16 @@
 import { useRef, useState } from 'react'
 import { useAppData } from '../state/AppData'
 import { db } from '../db/database'
-import { addBank, addCategory, deleteCategory, removeBank, updateCategory, updateSettings } from '../db/repo'
-import type { AccountId, Category, Settings, TxType } from '../db/types'
+import { addBank, addCategory, deleteCategory, removeBank, resetData, updateCategory, updateSettings } from '../db/repo'
+import { ACCOUNTS, type AccountId, type Category, type CategoryScope, type Settings } from '../db/types'
 import { sectionsOfAccount, subsectionsOf } from '../lib/categories'
 import { exportBackup, parseBackup } from '../lib/export'
 import { ImportExcel } from './ImportExcel'
 import { isSyncConfigured } from '../lib/sync'
-import { IconArrowDown, IconArrowUp, IconBank, IconCloud, IconDownload, IconFolder, IconPlus, IconTrash, IconUpload } from './Icons'
+import { IconBank, IconCloud, IconDownload, IconFolder, IconPlus, IconTrash, IconUpload } from './Icons'
 
 export function SettingsView() {
-  const { allCategories, settings, allTransactions, activeAccount, account } = useAppData()
+  const { allCategories, settings, allTransactions, allPendings, allAdvances, activeAccount, account } = useAppData()
   const fileRef = useRef<HTMLInputElement>(null)
   const [status, setStatus] = useState('')
 
@@ -18,11 +18,20 @@ export function SettingsView() {
     try {
       const backup = parseBackup(await file.text())
       if (!confirm('Esto reemplazará los datos actuales con los del respaldo. ¿Continuar?')) return
-      await db.transaction('rw', db.transactions, db.categories, db.settings, async () => {
+      await db.transaction('rw', db.transactions, db.categories, db.advances, db.pendings, db.settings, async () => {
         await db.transactions.clear()
         await db.categories.clear()
         await db.transactions.bulkPut(backup.transactions)
         await db.categories.bulkPut(backup.categories)
+        // Respaldos v1 no traen adelantos ni saldos por cobrar: se dejan como están
+        if (backup.advances) {
+          await db.advances.clear()
+          await db.advances.bulkPut(backup.advances)
+        }
+        if (backup.pendings) {
+          await db.pendings.clear()
+          await db.pendings.bulkPut(backup.pendings)
+        }
         if (backup.settings) await db.settings.put(backup.settings)
       })
       setStatus('✓ Respaldo restaurado correctamente.')
@@ -66,6 +75,10 @@ export function SettingsView() {
         <p className="text-sm text-slate-500 dark:text-silver-400">
           Estás editando la cuenta <b>{account.name}</b>. Cambia de cuenta con el selector de arriba.
         </p>
+        <p className="text-sm text-slate-500 dark:text-silver-400">
+          La etiqueta <b>Ingreso / Egreso / Ambos</b> decide en qué lista aparece cada sección al registrar un
+          movimiento. Tócala para cambiarla.
+        </p>
         <SectionManager categories={allCategories} account={activeAccount} allowsIncome={account.allowsIncome} />
       </Section>
 
@@ -83,7 +96,7 @@ export function SettingsView() {
       <Section title="Respaldo de datos">
         <p className="text-sm text-slate-500 dark:text-silver-400">Guarda una copia de todos los movimientos (de ambas cuentas), como copia de seguridad o para pasar datos entre equipos.</p>
         <div className="flex flex-wrap gap-2.5">
-          <button onClick={() => exportBackup(allTransactions, allCategories, settings)} className="flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600">
+          <button onClick={() => exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances)} className="flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600">
             <IconDownload width={16} height={16} /> Exportar respaldo
           </button>
           <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 dark:border-navy-600 dark:hover:bg-white/5">
@@ -104,6 +117,9 @@ export function SettingsView() {
         {status && <p className="text-sm">{status}</p>}
       </Section>
 
+      {/* Borrado total */}
+      <DangerZone />
+
       <p className="pb-2 text-center text-xs text-slate-400">GeoCiv Cuentas · funciona sin internet</p>
     </div>
   )
@@ -112,11 +128,12 @@ export function SettingsView() {
 function SectionManager({ categories, account, allowsIncome }: { categories: Category[]; account: AccountId; allowsIncome: boolean }) {
   const [name, setName] = useState('')
   const [color, setColor] = useState('#1ba3a3')
+  const [scope, setScope] = useState<CategoryScope>('expense')
   const sections = sectionsOfAccount(categories, account)
 
   async function addSection() {
     if (!name.trim()) return
-    await addCategory({ account, name: name.trim(), scope: allowsIncome ? 'both' : 'expense', color })
+    await addCategory({ account, name: name.trim(), scope: allowsIncome ? scope : 'expense', color })
     setName('')
   }
 
@@ -132,6 +149,7 @@ function SectionManager({ categories, account, allowsIncome }: { categories: Cat
 
       <div className="flex items-center gap-2 border-t border-black/5 pt-3 dark:border-white/5">
         <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-8 w-8 shrink-0 cursor-pointer rounded-lg border-0 bg-transparent p-0" aria-label="Color" />
+        {allowsIncome && <ScopeToggle scope={scope} onChange={setScope} />}
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -150,7 +168,7 @@ function SectionManager({ categories, account, allowsIncome }: { categories: Cat
 function SectionRow({ section, categories, allowsIncome }: { section: Category; categories: Category[]; allowsIncome: boolean }) {
   const subs = subsectionsOf(categories, section.id)
   const [sub, setSub] = useState('')
-  const [subScope, setSubScope] = useState<TxType>('expense')
+  const [subScope, setSubScope] = useState<CategoryScope>('expense')
 
   async function addSub() {
     if (!sub.trim()) return
@@ -164,6 +182,9 @@ function SectionRow({ section, categories, allowsIncome }: { section: Category; 
         <input type="color" value={section.color} onChange={(e) => updateCategory(section.id, { color: e.target.value })} className="h-7 w-7 shrink-0 cursor-pointer rounded-lg border-0 bg-transparent p-0" aria-label="Color" />
         <IconFolder width={16} height={16} style={{ color: section.color }} className="shrink-0" />
         <input defaultValue={section.name} onBlur={(e) => updateCategory(section.id, { name: e.target.value.trim() || section.name })} className="field flex-1 !py-1.5 font-medium" />
+        {allowsIncome && (
+          <ScopeToggle scope={section.scope} onChange={(next) => updateCategory(section.id, { scope: next })} />
+        )}
         <button
           onClick={() => {
             if (confirm(`¿Eliminar "${section.name}" y sus subsecciones?`)) deleteCategory(section.id)
@@ -179,28 +200,15 @@ function SectionRow({ section, categories, allowsIncome }: { section: Category; 
       <div className="mt-2 space-y-1.5 pl-5">
         {subs.map((ss) => (
           <div key={ss.id} className="flex items-center gap-2">
-            <span className={ss.scope === 'income' ? 'text-emerald-500' : 'text-rose-400'}>
-              {ss.scope === 'income' ? <IconArrowUp width={13} height={13} /> : <IconArrowDown width={13} height={13} />}
-            </span>
             <input defaultValue={ss.name} onBlur={(e) => updateCategory(ss.id, { name: e.target.value.trim() || ss.name })} className="field flex-1 !py-1.5 text-sm" />
+            <ScopeToggle scope={ss.scope} onChange={(next) => updateCategory(ss.id, { scope: next })} />
             <button onClick={() => deleteCategory(ss.id)} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10" aria-label="Eliminar subsección">
               <IconTrash width={14} height={14} />
             </button>
           </div>
         ))}
         <div className="flex items-center gap-2">
-          {allowsIncome && (
-            <button
-              type="button"
-              onClick={() => setSubScope((s) => (s === 'expense' ? 'income' : 'expense'))}
-              className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg border ${
-                subScope === 'income' ? 'border-emerald-500 text-emerald-500' : 'border-rose-400 text-rose-400'
-              }`}
-              title={subScope === 'income' ? 'Ingreso' : 'Egreso'}
-            >
-              {subScope === 'income' ? <IconArrowUp width={14} height={14} /> : <IconArrowDown width={14} height={14} />}
-            </button>
-          )}
+          {allowsIncome && <ScopeToggle scope={subScope} onChange={(next) => setSubScope(next)} />}
           <input value={sub} onChange={(e) => setSub(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSub()} placeholder="Agregar subsección" className="field flex-1 !py-1.5 text-sm" />
           <button onClick={addSub} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300 dark:bg-navy-700 dark:text-silver-300" aria-label="Agregar subsección">
             <IconPlus width={15} height={15} />
@@ -401,6 +409,121 @@ function AccesoSettings({ settings }: { settings: Settings }) {
 
       <SaveButton dirty={dirty} saved={saved} onSave={save} />
     </Section>
+  )
+}
+
+const SCOPE_LABEL: Record<CategoryScope, string> = { income: 'Ingreso', expense: 'Egreso', both: 'Ambos' }
+/** Al tocarla, la etiqueta rota entre los tres tipos. */
+const SCOPE_NEXT: Record<CategoryScope, CategoryScope> = { expense: 'income', income: 'both', both: 'expense' }
+const SCOPE_STYLE: Record<CategoryScope, string> = {
+  income: 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  expense: 'border-rose-400/60 bg-rose-500/10 text-rose-500',
+  both: 'border-slate-400/60 bg-slate-500/10 text-slate-500 dark:text-silver-400',
+}
+
+/** Etiqueta que define si una sección sirve para ingresos, egresos o ambos. */
+function ScopeToggle({ scope, onChange }: { scope: CategoryScope; onChange: (next: CategoryScope) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(SCOPE_NEXT[scope])}
+      title="Cambiar tipo: Egreso → Ingreso → Ambos"
+      className={`shrink-0 rounded-lg border px-2 py-1 text-[11px] font-semibold uppercase tracking-wide transition ${SCOPE_STYLE[scope]}`}
+    >
+      {SCOPE_LABEL[scope]}
+    </button>
+  )
+}
+
+/**
+ * Borrado total, para volver a importar desde cero. Descarga un respaldo antes
+ * y usa borrado lógico, así que el borrado también viaja al celular y a la nube.
+ */
+function DangerZone() {
+  const { allTransactions, allCategories, settings, allPendings, allAdvances } = useAppData()
+  const [accounts, setAccounts] = useState<AccountId[]>(ACCOUNTS.map((a) => a.id))
+  const [includeCategories, setIncludeCategories] = useState(true)
+  const [confirmText, setConfirmText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState('')
+
+  const ready = accounts.length > 0 && confirmText.trim().toUpperCase() === 'BORRAR'
+
+  function toggleAccount(id: AccountId) {
+    setAccounts((cur) => (cur.includes(id) ? cur.filter((a) => a !== id) : [...cur, id]))
+  }
+
+  async function run() {
+    if (!ready) return
+    setBusy(true)
+    try {
+      // Respaldo automático antes de borrar: el borrado no se puede deshacer.
+      exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances)
+      const n = await resetData({ accounts, includeCategories })
+      setResult(
+        `✓ Listo. Se borraron ${n.transactions} movimientos` +
+          (includeCategories ? `, ${n.categories} secciones` : '') +
+          `, ${n.advances} adelantos y ${n.pendings} saldos pendientes. Ya puedes importar de nuevo.`,
+      )
+      setConfirmText('')
+    } catch (e) {
+      setResult(`✕ ${(e as Error).message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card space-y-3 border border-rose-400/40 p-4">
+      <h2 className="font-semibold text-rose-600">Borrar todos los datos</h2>
+      <p className="text-sm text-slate-500 dark:text-silver-400">
+        Deja la app en blanco para volver a importar desde cero. <b>No se puede deshacer</b>: antes de borrar se
+        descarga un respaldo automático. Se conservan la empresa, las contraseñas y los bancos. El borrado se
+        sincroniza: también desaparece en el celular y en la nube.
+      </p>
+
+      <div>
+        <span className="mb-1.5 block text-xs font-medium text-slate-500">Cuentas a borrar</span>
+        <div className="flex flex-wrap gap-2">
+          {ACCOUNTS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => toggleAccount(a.id)}
+              className={`rounded-lg border-2 px-3 py-1.5 text-sm font-medium transition ${
+                accounts.includes(a.id)
+                  ? 'border-rose-500 bg-rose-500/10 text-rose-600'
+                  : 'border-slate-200 text-slate-500 dark:border-navy-600 dark:text-silver-400'
+              }`}
+            >
+              {a.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={includeCategories} onChange={(e) => setIncludeCategories(e.target.checked)} className="h-4 w-4" />
+        Borrar también las secciones y subsecciones
+      </label>
+
+      <label className="block">
+        <span className="mb-1 block text-xs font-medium text-slate-500">
+          Para confirmar, escribe <b>BORRAR</b>
+        </span>
+        <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="BORRAR" className="field" />
+      </label>
+
+      <button
+        onClick={run}
+        disabled={!ready || busy}
+        className="w-full rounded-xl bg-rose-600 py-3 font-semibold text-white transition hover:bg-rose-700 disabled:opacity-40"
+      >
+        {busy ? 'Borrando…' : 'Descargar respaldo y borrar todo'}
+      </button>
+
+      {result && <p className="text-sm">{result}</p>}
+    </section>
   )
 }
 

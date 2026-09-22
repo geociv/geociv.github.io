@@ -6,25 +6,36 @@ import { ReportPanel } from './ReportPanel'
 import { IconChevronDown } from './Icons'
 
 export function GlobalReports({ onExit, exitLabel = 'Cambiar' }: { onExit: () => void; exitLabel?: string }) {
-  const { allTransactions, allCategories, settings } = useAppData()
+  const { allTransactions, allCategories, allPendings, settings } = useAppData()
   const [scope, setScope] = useState('general')
 
   const projects = useMemo(() => sectionsOfAccount(allCategories, 'proyectos'), [allCategories])
 
-  const { filtered, scopeLabel } = useMemo(() => {
+  const { filtered, filteredPendings, scopeLabel } = useMemo(() => {
     if (scope === 'general')
-      return { filtered: allTransactions, scopeLabel: 'General – Empresa' }
+      return { filtered: allTransactions, filteredPendings: allPendings, scopeLabel: 'General – Empresa' }
     if (scope === 'oficina')
-      return { filtered: allTransactions.filter((t) => t.account === 'oficina'), scopeLabel: 'Oficina' }
+      return {
+        filtered: allTransactions.filter((t) => t.account === 'oficina'),
+        filteredPendings: allPendings.filter((p) => p.account === 'oficina'),
+        scopeLabel: 'Oficina',
+      }
     if (scope === 'proyectos')
-      return { filtered: allTransactions.filter((t) => t.account === 'proyectos'), scopeLabel: 'Proyectos (todos)' }
+      return {
+        filtered: allTransactions.filter((t) => t.account === 'proyectos'),
+        filteredPendings: allPendings.filter((p) => p.account === 'proyectos'),
+        scopeLabel: 'Proyectos (todos)',
+      }
     // un proyecto específico
     const name = projects.find((p) => p.id === scope)?.name ?? 'Proyecto'
     return {
       filtered: allTransactions.filter((t) => t.account === 'proyectos' && rootSectionId(allCategories, t.categoryId) === scope),
+      filteredPendings: allPendings.filter(
+        (p) => p.account === 'proyectos' && p.categoryId && rootSectionId(allCategories, p.categoryId) === scope,
+      ),
       scopeLabel: name,
     }
-  }, [scope, allTransactions, allCategories, projects])
+  }, [scope, allTransactions, allCategories, allPendings, projects])
 
   return (
     <div className="relative z-10 mx-auto flex h-[100dvh] max-w-2xl flex-col overflow-hidden bg-navy-950/80 shadow-2xl ring-1 ring-white/5 backdrop-blur-sm">
@@ -59,7 +70,13 @@ export function GlobalReports({ onExit, exitLabel = 'Cambiar' }: { onExit: () =>
           </select>
         </label>
 
-        <ReportPanel transactions={filtered} categories={allCategories} settings={settings} scopeLabel={scopeLabel} />
+        <ReportPanel
+          transactions={filtered}
+          categories={allCategories}
+          settings={settings}
+          scopeLabel={scopeLabel}
+          pendings={filteredPendings}
+        />
       </main>
     </div>
   )

@@ -21,6 +21,25 @@ export function subsectionsOf(categories: Category[], parentId: string, type?: T
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/**
+ * Opciones planas para elegir dónde va un movimiento: la sección y, debajo,
+ * cada una de sus subsecciones como "Sección › Subsección".
+ */
+export function leafOptionsFor(
+  categories: Category[],
+  type: TxType,
+  account: AccountId,
+): { id: string; label: string }[] {
+  const out: { id: string; label: string }[] = []
+  for (const s of sectionsFor(categories, type, account)) {
+    out.push({ id: s.id, label: s.name })
+    for (const sub of subsectionsOf(categories, s.id, type)) {
+      out.push({ id: sub.id, label: `${s.name} › ${sub.name}` })
+    }
+  }
+  return out
+}
+
 /** Devuelve el id de la sección raíz de cualquier categoría (para agrupar reportes). */
 export function rootSectionId(categories: Category[], id: string): string {
   const map = new Map(categories.map((c) => [c.id, c]))

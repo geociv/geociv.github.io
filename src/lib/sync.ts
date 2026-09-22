@@ -1,7 +1,8 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
+import type { Table } from 'dexie'
 import { db } from '../db/database'
 import { SUPABASE_ANON_KEY, SUPABASE_URL, SYNC_CONFIGURED, SYNC_WORKSPACE } from '../config'
-import type { Advance, Category, Transaction } from '../db/types'
+import type { Advance, Category, Pending, Transaction } from '../db/types'
 
 /**
  * Sincronización con Supabase. Viene HORNEADA (ver config.ts) — el cliente no
@@ -90,22 +91,12 @@ async function doSync(): Promise<SyncResult> {
   pulled += await mergeRemote<Category>(remoteCat as RemoteRow[], db.categories)
   pulled += await mergeRemote<Transaction>(remoteTx as RemoteRow[], db.transactions)
 
-  // ADELANTOS: tolerante a fallos (la tabla en Supabase puede no existir aún).
-  // Si falla, no rompe la sincronización de categorías/movimientos.
-  try {
-    const localAdv = await db.advances.where('updatedAt').above(pushWatermark).toArray()
-    if (localAdv.length) {
-      const { error } = await sb.from('advances').upsert(localAdv.map((a) => ({ ...a, workspace: ws })))
-      if (error) throw new Error(error.message)
-      pushed += localAdv.length
-    }
-    const { data: remoteAdv, error } = await sb.from('advances').select('*').eq('workspace', ws)
-    if (error) throw new Error(error.message)
-    pulled += await mergeRemote<Advance>(remoteAdv as RemoteRow[], db.advances)
-  } catch (e) {
-    // Silencioso: probablemente falta correr el SQL de la tabla `advances`.
-    console.warn('Sync adelantos omitido:', (e as Error).message)
-  }
+  // ADELANTOS y SALDOS PENDIENTES: tolerantes a fallos (la tabla en Supabase
+  // puede no existir aún). Si fallan, no rompen la sincronización principal.
+  const advResult = await syncOptionalTable<Advance>(sb, ws, 'advances', db.advances, pushWatermark)
+  const pendResult = await syncOptionalTable<Pending>(sb, ws, 'pendings', db.pendings, pushWatermark)
+  pushed += advResult.pushed + pendResult.pushed
+  pulled += advResult.pulled + pendResult.pulled
 
   const now = Date.now()
   localStorage.setItem(WATERMARK_KEY, String(now))
@@ -144,6 +135,35 @@ async function mergeRemote<T extends { id: string; updatedAt: number }>(
     if (await applyRemoteRow(table, row)) n++
   }
   return n
+}
+
+/**
+ * Sincroniza una tabla "opcional" (adelantos, saldos pendientes). Si su SQL aún
+ * no se corrió en Supabase, se omite con un aviso en consola en vez de tumbar
+ * la sincronización de movimientos y secciones.
+ */
+async function syncOptionalTable<T extends { id: string; updatedAt: number }>(
+  sb: SupabaseClient,
+  ws: string,
+  name: string,
+  table: Table<T, string>,
+  pushWatermark: number,
+): Promise<{ pushed: number; pulled: number }> {
+  try {
+    let pushed = 0
+    const local = await table.where('updatedAt').above(pushWatermark).toArray()
+    if (local.length) {
+      const { error } = await sb.from(name).upsert(local.map((r) => ({ ...r, workspace: ws })))
+      if (error) throw new Error(error.message)
+      pushed = local.length
+    }
+    const { data, error } = await sb.from(name).select('*').eq('workspace', ws)
+    if (error) throw new Error(error.message)
+    return { pushed, pulled: await mergeRemote<T>(data as RemoteRow[], table) }
+  } catch (e) {
+    console.warn(`Sync "${name}" omitido:`, (e as Error).message)
+    return { pushed: 0, pulled: 0 }
+  }
 }
 
 // ===== Orquestación automática =====
@@ -210,6 +230,9 @@ function startRealtime(): () => void {
     )
     .on('postgres_changes', { event: '*', schema: 'public', table: 'advances', filter }, (p) =>
       apply(db.advances, p.new),
+    )
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pendings', filter }, (p) =>
+      apply(db.pendings, p.new),
     )
     .subscribe()
 

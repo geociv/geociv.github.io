@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { addBank, addTransaction, updateTransaction } from '../db/repo'
+import { addBank, addPending, addTransaction, updateTransaction } from '../db/repo'
 import { type Category, type PaymentMethod, type Transaction, type TxType } from '../db/types'
 import { useAppData } from '../state/AppData'
 import { sectionsFor, subsectionsOf } from '../lib/categories'
 import { todayISO } from '../lib/dates'
 import { parseAmount, roundMoney, sanitizeAmountInput } from '../lib/money'
-import { IconArrowDown, IconArrowUp, IconBank, IconCash, IconChevronDown, IconChevronUp, IconClose } from './Icons'
+import { IconArrowDown, IconArrowUp, IconBank, IconCash, IconChevronDown, IconChevronUp, IconClock, IconClose } from './Icons'
 
 interface Props {
   categories: Category[]
@@ -29,6 +29,13 @@ export function AddTransactionSheet({ categories, editing, onClose }: Props) {
   const [description, setDescription] = useState(editing?.description ?? '')
   const [note, setNote] = useState(editing?.note ?? '')
   const [error, setError] = useState('')
+
+  // Saldo por cobrar: el resto que queda cuando se cobra un abono inicial.
+  // Solo al crear un ingreso nuevo (al editar no, para no duplicar pendientes).
+  const [pendingAmount, setPendingAmount] = useState('')
+  const [pendingClient, setPendingClient] = useState('')
+  const [pendingDate, setPendingDate] = useState(editing?.date ?? todayISO())
+  const askPending = !editing && allowsIncome && type === 'income'
 
   const sections = useMemo(() => sectionsFor(categories, type, activeAccount), [categories, type, activeAccount])
   const subs = useMemo(() => (sectionId ? subsectionsOf(categories, sectionId, type) : []), [categories, sectionId, type])
@@ -72,8 +79,23 @@ export function AddTransactionSheet({ categories, editing, onClose }: Props) {
       bank,
       note,
     }
-    if (editing) await updateTransaction(editing.id, payload)
-    else await addTransaction(payload)
+    if (editing) {
+      await updateTransaction(editing.id, payload)
+    } else {
+      const txId = await addTransaction(payload)
+      const rest = parseAmount(pendingAmount)
+      if (askPending && Number.isFinite(rest) && rest > 0) {
+        await addPending({
+          account: activeAccount,
+          client: pendingClient.trim() || description.trim() || 'Sin nombre',
+          amount: rest,
+          date: pendingDate,
+          categoryId: subId || sectionId,
+          sourceTxId: txId,
+          note: note.trim() || undefined,
+        })
+      }
+    }
     if (paymentMethod === 'transferencia') await addBank(bank)
     onClose()
   }
@@ -224,6 +246,48 @@ export function AddTransactionSheet({ categories, editing, onClose }: Props) {
             className="field"
           />
         </label>
+
+        {/* Saldo por cobrar: el 50% (o lo que sea) que falta */}
+        {askPending && (
+          <div className="mb-4 space-y-2.5 rounded-xl border border-amber-400/40 bg-amber-500/5 p-3">
+            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <IconClock width={16} height={16} />
+              <span className="text-xs font-semibold uppercase tracking-wide">¿Queda un saldo por cobrar?</span>
+            </div>
+            <div className="flex gap-2">
+              <input
+                inputMode="decimal"
+                value={pendingAmount}
+                onChange={(e) => setPendingAmount(sanitizeAmountInput(e.target.value))}
+                placeholder="Monto que falta (opcional)"
+                className="field flex-1 tabular-nums"
+              />
+              <button
+                type="button"
+                onClick={() => setPendingAmount(amount)}
+                disabled={!amount}
+                className="shrink-0 rounded-lg border border-amber-400/60 px-3 text-xs font-semibold text-amber-600 transition hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-400"
+                title="El resto es igual a lo cobrado ahora"
+              >
+                Falta el 50%
+              </button>
+            </div>
+            {parseAmount(pendingAmount) > 0 && (
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                <input
+                  value={pendingClient}
+                  onChange={(e) => setPendingClient(e.target.value)}
+                  placeholder="Cliente u obra"
+                  className="field"
+                />
+                <input type="date" value={pendingDate} onChange={(e) => setPendingDate(e.target.value)} className="field" />
+              </div>
+            )}
+            <p className="text-xs text-slate-500 dark:text-silver-400">
+              No suma al balance: queda anotado en <b>Saldos por cobrar</b> hasta que lo cobres.
+            </p>
+          </div>
+        )}
 
         <label className="mb-5 block">
           <span className="mb-1 block text-xs font-medium text-slate-500">

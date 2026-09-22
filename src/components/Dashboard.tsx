@@ -4,16 +4,19 @@ import { rangeFor, fmtDateShort } from '../lib/dates'
 import { formatMoney } from '../lib/money'
 import { summarize, totalBalance } from '../lib/reports'
 import { categoryPath, rootSectionId, sectionsOfAccount } from '../lib/categories'
-import { IconArrowDown, IconArrowUp, IconChevronRight, IconFolder, IconPlus, IconWallet } from './Icons'
+import { IconArrowDown, IconArrowUp, IconChevronRight, IconClock, IconFolder, IconPlus, IconWallet } from './Icons'
 import { AdvancesSheet } from './AdvancesSheet'
+import { PendingsSheet } from './PendingsSheet'
 
 export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenProject: (id: string) => void }) {
-  const { transactions, categories, advances, settings, account, activeAccount } = useAppData()
+  const { transactions, categories, advances, pendings, settings, account, activeAccount } = useAppData()
   const money = (n: number) => formatMoney(n, settings)
   const allowsIncome = account.allowsIncome
   const [showAdvances, setShowAdvances] = useState(false)
+  const [showPendings, setShowPendings] = useState(false)
 
   const advancesTotal = useMemo(() => advances.reduce((s, a) => s + a.amount, 0), [advances])
+  const pendingsTotal = useMemo(() => pendings.reduce((s, p) => s + p.amount, 0), [pendings])
 
   // Totales por proyecto (solo cuenta Proyectos)
   const projects = useMemo(() => {
@@ -86,6 +89,24 @@ export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenP
         </div>
         <span className="flex items-center gap-1 rounded-lg bg-copper-500/10 px-3 py-1.5 text-xs font-semibold text-copper-500">
           {advances.length > 0 ? 'Gestionar / Quitar' : 'Registrar'}
+          <IconChevronRight width={14} height={14} />
+        </span>
+      </button>
+
+      {/* Saldos por cobrar (no suman al balance hasta cobrarse) */}
+      <button
+        onClick={() => setShowPendings(true)}
+        className="card flex w-full items-center gap-3 p-4 text-left transition hover:ring-2 hover:ring-amber-500/40"
+      >
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-500/15 text-amber-500">
+          <IconClock width={20} height={20} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-slate-400">Saldos por cobrar</p>
+          <p className="text-lg font-bold tabular-nums text-amber-500">{money(pendingsTotal)}</p>
+        </div>
+        <span className="flex items-center gap-1 rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-500">
+          {pendings.length > 0 ? `${pendings.length} pendiente${pendings.length > 1 ? 's' : ''}` : 'Registrar'}
           <IconChevronRight width={14} height={14} />
         </span>
       </button>
@@ -191,6 +212,7 @@ export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenP
       </div>
 
       {showAdvances && <AdvancesSheet onClose={() => setShowAdvances(false)} />}
+      {showPendings && <PendingsSheet onClose={() => setShowPendings(false)} />}
     </div>
   )
 }

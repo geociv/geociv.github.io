@@ -1,14 +1,14 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useAppData } from '../state/AppData'
 import { ACCOUNTS, type AccountId } from '../db/types'
-import { commitImport, downloadTemplate, parseWorkbook, TEMPLATE_SPEC, type ParsedImport } from '../lib/import'
+import { commitImport, downloadTemplate, parseWorkbook, previewSections, TEMPLATE_SPEC, type ParsedImport } from '../lib/import'
 import { exportBackup } from '../lib/export'
 import { formatMoney } from '../lib/money'
 import { fmtDate } from '../lib/dates'
 import { IconDownload, IconFolder, IconUpload, IconWallet } from './Icons'
 
 export function ImportExcel() {
-  const { settings, allTransactions, allCategories } = useAppData()
+  const { settings, allTransactions, allCategories, allPendings, allAdvances } = useAppData()
   const fileRef = useRef<HTMLInputElement>(null)
   const [account, setAccount] = useState<AccountId>('oficina')
   const [dayFirst, setDayFirst] = useState(true)
@@ -20,6 +20,8 @@ export function ImportExcel() {
 
   const money = (n: number) => formatMoney(n, settings)
   const spec = TEMPLATE_SPEC[account]
+  const optional = spec.headers.filter((h) => !spec.required.includes(h))
+  const sections = useMemo(() => (parsed ? previewSections(parsed.rows) : []), [parsed])
 
   function reset() {
     setParsed(null)
@@ -93,7 +95,11 @@ export function ImportExcel() {
           <IconDownload width={16} height={16} /> Plantilla de {account === 'oficina' ? 'Oficina' : 'Proyectos'}
         </button>
         <p className="mt-1.5 text-xs text-slate-400">
-          Columnas obligatorias: <b>{spec.required.join(', ')}</b>. Opcionales: {spec.optional.join(', ')}.
+          Columnas obligatorias: <b>{spec.required.join(', ')}</b>. Opcionales: {optional.join(', ')}.
+        </p>
+        <p className="mt-1 text-xs text-slate-400">
+          La columna <b>Tipo de sección</b> (Ingreso / Egreso / Ambos) decide en qué lista aparece cada sección al
+          registrar un movimiento. Si la dejas vacía, se deduce de la columna <b>Tipo</b>.
         </p>
       </div>
 
@@ -140,6 +146,13 @@ export function ImportExcel() {
       {parsed?.formatError && (
         <div className="rounded-xl border border-rose-300/60 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
           <b>Formato incorrecto.</b> {parsed.formatError}
+        </div>
+      )}
+
+      {/* Aviso no bloqueante */}
+      {parsed && !parsed.formatError && parsed.warning && (
+        <div className="rounded-xl border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+          {parsed.warning}
         </div>
       )}
 
@@ -191,6 +204,38 @@ export function ImportExcel() {
             </div>
           )}
 
+          {sections.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-xs font-medium text-slate-500">
+                Secciones detectadas ({sections.length}) — revisa que el tipo sea el correcto:
+              </p>
+              <ul className="flex flex-wrap gap-1.5">
+                {sections.map((sec) => (
+                  <li
+                    key={sec.name}
+                    className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-1 text-xs dark:bg-navy-900"
+                  >
+                    <span className="max-w-[16rem] truncate font-medium">{sec.name}</span>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                        sec.scope === 'income'
+                          ? 'bg-emerald-500/15 text-emerald-600'
+                          : sec.scope === 'expense'
+                            ? 'bg-rose-500/15 text-rose-500'
+                            : 'bg-slate-500/15 text-slate-500'
+                      }`}
+                    >
+                      {sec.scope === 'income' ? 'Ingreso' : sec.scope === 'expense' ? 'Egreso' : 'Ambos'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-xs text-slate-400">
+                Después de importar puedes cambiar el tipo de cualquier sección en <b>Ajustes → Secciones</b>.
+              </p>
+            </div>
+          )}
+
           {parsed.errors.length > 0 && (
             <details className="text-xs">
               <summary className="cursor-pointer text-amber-600">Ver filas con problemas</summary>
@@ -206,7 +251,7 @@ export function ImportExcel() {
 
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => exportBackup(allTransactions, allCategories, settings)}
+              onClick={() => exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-100 dark:border-navy-600 dark:hover:bg-white/5"
             >
               Respaldar antes

@@ -2,25 +2,30 @@ import * as XLSX from 'xlsx'
 import { db, uid } from '../db/database'
 import { requestSync } from './sync'
 import { roundMoney } from './money'
-import type { AccountId, Category, PaymentMethod, Transaction, TxType } from '../db/types'
+import type { AccountId, Category, CategoryScope, PaymentMethod, Transaction, TxType } from '../db/types'
 
 const PALETTE = ['#2563eb', '#16a34a', '#c026d3', '#dc2626', '#d97706', '#0284c7', '#7c3aed', '#0d9488']
 
-/** Columnas exigidas y opcionales por cuenta. El archivo debe cumplirlas. */
-export const TEMPLATE_SPEC: Record<AccountId, { required: string[]; optional: string[] }> = {
+/**
+ * Columnas de la plantilla por cuenta. `headers` es el orden en que se genera el
+ * Excel; `required` son las que el archivo DEBE traer para poder importarlo.
+ * "Tipo de sección" es opcional: sirve para declarar que una sección es de
+ * Ingreso, de Egreso o de Ambos. Si no viene, se deduce de la columna "Tipo".
+ */
+export const TEMPLATE_SPEC: Record<AccountId, { headers: string[]; required: string[] }> = {
   oficina: {
-    required: ['Fecha', 'Tipo', 'Monto', 'Sección'],
-    optional: ['Subsección', 'Descripción', 'Método', 'Banco', 'Nota'],
+    headers: ['Fecha', 'Tipo', 'Monto', 'Sección', 'Subsección', 'Tipo de sección', 'Descripción', 'Método', 'Banco', 'Nota'],
+    // En Oficina la columna Tipo puede faltar: se asume Egreso (y se avisa).
+    required: ['Fecha', 'Monto', 'Sección'],
   },
   proyectos: {
+    headers: ['Fecha', 'Tipo', 'Monto', 'Proyecto', 'Subsección', 'Tipo de sección', 'Descripción', 'Método', 'Banco', 'Nota'],
     required: ['Fecha', 'Tipo', 'Monto', 'Proyecto'],
-    optional: ['Subsección', 'Descripción', 'Método', 'Banco', 'Nota'],
   },
 }
 
 export function templateHeaders(account: AccountId): string[] {
-  const spec = TEMPLATE_SPEC[account]
-  return [...spec.required, ...spec.optional]
+  return TEMPLATE_SPEC[account].headers
 }
 
 export interface ImportRow {
@@ -32,6 +37,8 @@ export interface ImportRow {
   date: string
   section: string
   subsection?: string
+  /** Tipo declarado para la sección en la columna "Tipo de sección" (opcional). */
+  sectionType?: CategoryScope
   description: string
   paymentMethod?: PaymentMethod
   bank?: string
@@ -49,6 +56,8 @@ export interface ParsedImport {
   totalRows: number
   /** Si el archivo no cumple el formato, aquí va el motivo y `rows` viene vacío. */
   formatError: string | null
+  /** Aviso no bloqueante (ej. falta la columna Tipo y se asume Egreso). */
+  warning: string | null
 }
 
 // ---------- Plantillas ----------
@@ -58,18 +67,39 @@ export function downloadTemplate(account: AccountId): void {
   const example =
     account === 'oficina'
       ? [
-          { Fecha: '15/01/2026', Tipo: 'Egreso', Monto: 320.5, 'Sección': 'Sueldos', 'Subsección': '', 'Descripción': 'Sueldo enero', 'Método': 'Efectivo', Banco: '', Nota: '' },
-          { Fecha: '18/01/2026', Tipo: 'Ingreso', Monto: 500, 'Sección': 'Reembolsos', 'Subsección': '', 'Descripción': 'Reembolso caja chica', 'Método': 'Efectivo', Banco: '', Nota: '' },
+          { Fecha: '15/01/2026', Tipo: 'Egreso', Monto: 320.5, 'Sección': 'Sueldos', 'Subsección': '', 'Tipo de sección': 'Egreso', 'Descripción': 'Sueldo enero', 'Método': 'Efectivo', Banco: '', Nota: '' },
+          { Fecha: '18/01/2026', Tipo: 'Ingreso', Monto: 500, 'Sección': 'Reembolsos', 'Subsección': '', 'Tipo de sección': 'Ingreso', 'Descripción': 'Reembolso caja chica', 'Método': 'Efectivo', Banco: '', Nota: '' },
         ]
       : [
-          { Fecha: '15/01/2026', Tipo: 'Ingreso', Monto: 5000, Proyecto: 'Proyecto 1', 'Subsección': 'Anticipos', 'Descripción': 'Anticipo de obra', 'Método': 'Transferencia', Banco: 'Banco Pichincha', Nota: 'F-001' },
-          { Fecha: '20/01/2026', Tipo: 'Egreso', Monto: 1250.75, Proyecto: 'Proyecto 1', 'Subsección': 'Materiales', 'Descripción': 'Cemento', 'Método': 'Efectivo', Banco: '', Nota: '' },
+          { Fecha: '15/01/2026', Tipo: 'Ingreso', Monto: 5000, Proyecto: 'Proyecto 1', 'Subsección': 'Anticipos', 'Tipo de sección': 'Ambos', 'Descripción': 'Anticipo de obra', 'Método': 'Transferencia', Banco: 'Banco Pichincha', Nota: 'F-001' },
+          { Fecha: '20/01/2026', Tipo: 'Egreso', Monto: 1250.75, Proyecto: 'Proyecto 1', 'Subsección': 'Materiales', 'Tipo de sección': 'Ambos', 'Descripción': 'Cemento', 'Método': 'Efectivo', Banco: '', Nota: '' },
         ]
 
   const ws = XLSX.utils.json_to_sheet(example, { header: headers })
   ws['!cols'] = headers.map((h) => ({ wch: h === 'Descripción' ? 26 : 16 }))
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Movimientos')
+
+  // Hoja de ayuda: qué significa cada columna
+  const help = [
+    ['Columna', 'Para qué sirve'],
+    ['Fecha', 'Día del movimiento: 15/01/2026 o 2026-01-15.'],
+    ['Tipo', 'Ingreso o Egreso. Define si el monto suma o resta.'],
+    ['Monto', 'Siempre positivo. El signo lo pone la columna Tipo.'],
+    [account === 'oficina' ? 'Sección' : 'Proyecto', 'Nombre de la sección o del proyecto. Si no existe, se crea.'],
+    ['Subsección', 'Opcional. Detalle dentro de la sección (ej. Materiales).'],
+    [
+      'Tipo de sección',
+      'Opcional. Ingreso, Egreso o Ambos. Decide en qué lista aparece la sección al registrar un movimiento. Si se deja vacío, se deduce de la columna Tipo.',
+    ],
+    ['Descripción', 'Concepto del movimiento.'],
+    ['Método', 'Efectivo o Transferencia (opcional).'],
+    ['Banco', 'Solo si el método es Transferencia.'],
+    ['Nota', 'Información extra: Nº de factura, proveedor, observaciones.'],
+  ]
+  const wsHelp = XLSX.utils.aoa_to_sheet(help)
+  wsHelp['!cols'] = [{ wch: 18 }, { wch: 82 }]
+  XLSX.utils.book_append_sheet(wb, wsHelp, 'Instrucciones')
   const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
   const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   const url = URL.createObjectURL(blob)
@@ -160,6 +190,14 @@ function parseType(v: unknown): TxType | null {
   return null
 }
 
+/** "Tipo de sección": Ingreso, Egreso o Ambos. */
+function parseScope(v: unknown): CategoryScope | undefined {
+  const s = norm(clean(v))
+  if (!s) return undefined
+  if (s.startsWith('amb') || s.startsWith('los dos') || s === 'both') return 'both'
+  return parseType(v) ?? undefined
+}
+
 function parseMethod(v: unknown): PaymentMethod | undefined {
   const s = norm(clean(v))
   if (s.startsWith('efe') || s === 'cash') return 'efectivo'
@@ -180,7 +218,7 @@ function pick(row: Record<string, unknown>, names: string[]): unknown {
 // ---------- Lectura y validación ----------
 
 export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = true): ParsedImport {
-  const empty: ParsedImport = { rows: [], errors: [], totalRows: 0, formatError: null }
+  const empty: ParsedImport = { rows: [], errors: [], totalRows: 0, formatError: null, warning: null }
   let wb: XLSX.WorkBook
   try {
     wb = XLSX.read(data, { cellDates: true })
@@ -202,6 +240,12 @@ export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = 
     }
   }
 
+  // En Oficina la columna Tipo puede no venir: se asume Egreso, pero se avisa.
+  const hasTypeColumn = present.includes(norm('Tipo'))
+  const warning = hasTypeColumn
+    ? null
+    : 'El archivo no trae la columna "Tipo", así que todas las filas se importarán como EGRESO. Si hay ingresos, agrégala a la plantilla y vuelve a subir el archivo.'
+
   const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
   const rows: ImportRow[] = []
   const errors: ImportError[] = []
@@ -214,12 +258,14 @@ export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = 
     const amount = parseAmountCell(pick(r, ['Monto', 'Valor', 'Importe', 'Amount']))
     const section = clean(pick(r, ['Sección', 'Proyecto', 'Section', 'Categoría']))
     const subsection = clean(pick(r, ['Subsección', 'Subsection']))
+    const sectionType = parseScope(pick(r, ['Tipo de sección', 'Tipo de seccion', 'Tipo sección', 'Section type']))
     const description = clean(pick(r, ['Descripción', 'Concepto', 'Detalle', 'Description']))
     const note = clean(pick(r, ['Nota', 'Observación', 'Note']))
     const bank = clean(pick(r, ['Banco', 'Cooperativa', 'Bank']))
     const paymentMethod = parseMethod(pick(r, ['Método', 'Forma de pago', 'Method']))
-    // Ambas cuentas manejan ingresos y egresos: la columna Tipo es obligatoria
-    const type: TxType | null = parseType(pick(r, ['Tipo', 'Type']))
+    // Ambas cuentas manejan ingresos y egresos. Si la columna Tipo no existe
+    // en el archivo (solo permitido en Oficina), se asume Egreso.
+    const type: TxType | null = hasTypeColumn ? parseType(pick(r, ['Tipo', 'Type'])) : 'expense'
 
     if (!date) return errors.push({ rowNumber, message: 'Fecha inválida o vacía' })
     if (!isFinite(amount) || amount <= 0) return errors.push({ rowNumber, message: 'Monto inválido, vacío o cero' })
@@ -235,6 +281,7 @@ export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = 
       date,
       section,
       subsection: subsection || undefined,
+      sectionType,
       description,
       paymentMethod,
       bank: paymentMethod === 'transferencia' ? bank || undefined : undefined,
@@ -242,16 +289,93 @@ export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = 
     })
   })
 
-  return { rows, errors, totalRows: raw.length, formatError: null }
+  return { rows, errors, totalRows: raw.length, formatError: null, warning }
 }
 
 // ---------- Guardado ----------
 
-/** Inserta los movimientos, creando las secciones/subsecciones que falten. */
+/** Clave con la que se identifica una sección dentro del archivo. */
+const sectionKeyOf = (r: ImportRow) => `${r.account}|${norm(r.section)}`
+
+interface ScopeInfo {
+  types: Set<TxType>
+  explicit?: CategoryScope
+}
+
+/**
+ * Recorre las filas y anota, para cada sección y subsección, qué tipos de
+ * movimiento trae el archivo y si se declaró un tipo a mano.
+ */
+function collectScopes(rows: ImportRow[]): Map<string, ScopeInfo> {
+  const map = new Map<string, ScopeInfo>()
+  const add = (key: string, type: TxType, explicit?: CategoryScope) => {
+    const info = map.get(key) ?? { types: new Set<TxType>() }
+    info.types.add(type)
+    if (explicit) info.explicit = explicit
+    map.set(key, info)
+  }
+  for (const r of rows) {
+    const key = sectionKeyOf(r)
+    add(key, r.type, r.sectionType)
+    // La subsección toma su tipo de sus propias filas, no de "Tipo de sección"
+    if (r.subsection) add(`${key}|${norm(r.subsection)}`, r.type)
+  }
+  return map
+}
+
+/**
+ * Decide si una sección es de ingresos, de egresos o de ambos. Manda lo que
+ * declare la columna "Tipo de sección"; si eso contradice a las filas del
+ * archivo, gana 'both': es preferible que la sección aparezca de más y no que
+ * un movimiento se quede sin dónde registrarse.
+ */
+function resolveScope(info: ScopeInfo | undefined, fallback: TxType): CategoryScope {
+  const types = info?.types ?? new Set<TxType>([fallback])
+  const observed: CategoryScope = types.size > 1 ? 'both' : types.has('income') ? 'income' : 'expense'
+  const explicit = info?.explicit
+  if (!explicit || explicit === observed) return observed
+  return 'both'
+}
+
+/** Une dos alcances: si no coinciden, la categoría pasa a servir para ambos. */
+const widen = (current: CategoryScope, needed: CategoryScope): CategoryScope =>
+  current === needed ? current : 'both'
+
+export interface SectionPreview {
+  name: string
+  scope: CategoryScope
+  count: number
+}
+
+/**
+ * Resumen de las secciones que traerá el archivo y de qué tipo quedará cada una.
+ * Sirve para revisarlo ANTES de importar, que es donde se detecta una sección
+ * mal clasificada (ej. "Arriendo" apareciendo entre los ingresos).
+ */
+export function previewSections(rows: ImportRow[]): SectionPreview[] {
+  const scopes = collectScopes(rows)
+  const byKey = new Map<string, SectionPreview>()
+  for (const r of rows) {
+    const key = sectionKeyOf(r)
+    const cur = byKey.get(key)
+    if (cur) cur.count++
+    else byKey.set(key, { name: r.section, scope: resolveScope(scopes.get(key), r.type), count: 1 })
+  }
+  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * Inserta los movimientos, creando las secciones/subsecciones que falten con el
+ * tipo (ingreso / egreso / ambos) que les corresponde según el archivo.
+ */
 export async function commitImport(rows: ImportRow[]): Promise<number> {
   const now = Date.now()
+  const scopes = collectScopes(rows)
   const cats: Category[] = await db.categories.filter((c) => !c.deleted).toArray()
   const newCats: Category[] = []
+  /** Secciones que ya existían y hay que ampliar de alcance. */
+  const widened = new Map<string, Category>()
+  let sectionCount = 0
 
   const all = () => [...cats, ...newCats]
   const findSection = (account: AccountId, name: string) =>
@@ -259,33 +383,55 @@ export async function commitImport(rows: ImportRow[]): Promise<number> {
   const findSub = (parentId: string, name: string) =>
     all().find((c) => c.parentId === parentId && norm(c.name) === norm(name))
 
+  /** Amplía el alcance de una categoría existente y la deja lista para guardar. */
+  const applyWiden = (cat: Category, needed: CategoryScope): Category => {
+    const merged = widen(cat.scope, needed)
+    if (merged === cat.scope) return cat
+    const updated: Category = { ...cat, scope: merged, updatedAt: now }
+    const idx = cats.findIndex((c) => c.id === cat.id)
+    if (idx >= 0) cats[idx] = updated
+    else {
+      const j = newCats.findIndex((c) => c.id === cat.id)
+      if (j >= 0) newCats[j] = updated
+    }
+    if (idx >= 0) widened.set(updated.id, updated)
+    return updated
+  }
+
   const txs: Transaction[] = []
 
-  for (const r of rows) {
+  rows.forEach((r, i) => {
+    const key = sectionKeyOf(r)
+    const sectionScope = resolveScope(scopes.get(key), r.type)
+
     let section = findSection(r.account, r.section)
     if (!section) {
       section = {
         id: uid(),
         account: r.account,
         name: r.section,
-        scope: 'both',
-        color: PALETTE[newCats.length % PALETTE.length],
+        scope: sectionScope,
+        color: PALETTE[sectionCount % PALETTE.length],
         createdAt: now,
         updatedAt: now,
         deleted: false,
       }
+      sectionCount++
       newCats.push(section)
+    } else {
+      section = applyWiden(section, sectionScope)
     }
 
     let leafId = section.id
     if (r.subsection) {
+      const subScope = resolveScope(scopes.get(`${key}|${norm(r.subsection)}`), r.type)
       let sub = findSub(section.id, r.subsection)
       if (!sub) {
         sub = {
           id: uid(),
           account: r.account,
           name: r.subsection,
-          scope: r.type,
+          scope: subScope,
           color: section.color,
           parentId: section.id,
           createdAt: now,
@@ -293,6 +439,8 @@ export async function commitImport(rows: ImportRow[]): Promise<number> {
           deleted: false,
         }
         newCats.push(sub)
+      } else {
+        sub = applyWiden(sub, subScope)
       }
       leafId = sub.id
     }
@@ -308,14 +456,16 @@ export async function commitImport(rows: ImportRow[]): Promise<number> {
       paymentMethod: r.paymentMethod,
       bank: r.bank,
       note: r.note,
-      createdAt: now,
-      updatedAt: now,
+      // +i conserva el orden de las filas del Excel dentro de un mismo día
+      createdAt: now + i,
+      updatedAt: now + i,
       deleted: false,
     })
-  }
+  })
 
   await db.transaction('rw', db.categories, db.transactions, async () => {
-    if (newCats.length) await db.categories.bulkPut(newCats)
+    const toSave = [...newCats, ...widened.values()]
+    if (toSave.length) await db.categories.bulkPut(toSave)
     await db.transactions.bulkPut(txs)
   })
   requestSync()

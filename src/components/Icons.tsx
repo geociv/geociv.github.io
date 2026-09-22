@@ -174,6 +174,19 @@ export const IconChevronUp = (p: IconProps) => (
   </svg>
 )
 
+export const IconClock = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3.5 2" />
+  </svg>
+)
+
+export const IconCheck = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </svg>
+)
+
 export const IconWallet = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2" />

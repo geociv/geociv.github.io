@@ -115,3 +115,33 @@ export interface Advance {
   /** "Quitar" un adelanto = marcarlo borrado (ya liquidado). */
   deleted?: boolean
 }
+
+/**
+ * Saldo pendiente por cobrar: el porcentaje que falta cuando se trabaja con
+ * abono inicial (ej. 50% al empezar y 50% al entregar).
+ * NO es un ingreso todavía: no suma al balance hasta que se cobra. Al cobrarlo
+ * se crea el movimiento de ingreso real y el pendiente queda liquidado.
+ */
+export interface Pending {
+  id: string
+  account: AccountId
+  /** Cliente u obra a quien se le va a cobrar. */
+  client: string
+  /** Monto que falta por cobrar. */
+  amount: number
+  /** Fecha esperada de cobro (o de registro), en formato YYYY-MM-DD. */
+  date: string
+  /** Sección/subsección donde se registrará el ingreso al cobrarlo. */
+  categoryId?: string
+  note?: string
+  /** Movimiento del abono inicial que lo generó, si nació desde el formulario. */
+  sourceTxId?: string
+  /** Movimiento de ingreso creado al cobrarlo. */
+  settledTxId?: string
+  /** Momento en que se cobró. Vacío = sigue pendiente. */
+  settledAt?: number
+  createdAt: number
+  updatedAt: number
+  /** Borrado lógico (se anuló el pendiente). */
+  deleted?: boolean
+}

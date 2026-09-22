@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import type { Category, Settings, Transaction } from '../db/types'
+import type { Advance, Category, Pending, Settings, Transaction } from '../db/types'
 import type { Range } from './dates'
 import { fmtDate } from './dates'
 import { formatMoney } from './money'
@@ -46,6 +46,7 @@ export async function exportReportPDF(
   range: Range,
   periodLabel: string,
   scopeLabel?: string,
+  pendings: Pending[] = [],
 ): Promise<void> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
   const money = (n: number) => formatMoney(n, settings)
@@ -111,6 +112,19 @@ export async function exportReportPDF(
   })
   y += 28
 
+  // Saldos por cobrar: van aparte porque NO están dentro del balance
+  const pendingTotal = pendings.reduce((sum, p) => sum + p.amount, 0)
+  if (pendings.length) {
+    doc.setFontSize(9)
+    doc.setTextColor(...BRAND.grayRGB)
+    doc.text(
+      `Saldos por cobrar (no incluidos en el balance): ${money(pendingTotal)} en ${pendings.length} pendiente${pendings.length > 1 ? 's' : ''}`,
+      12,
+      y - 4,
+    )
+    y += 2
+  }
+
   const lastY = () => (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY
 
   // ---- Desglose por sección ----
@@ -128,6 +142,27 @@ export async function exportReportPDF(
       styles: { fontSize: 8.5, cellPadding: 2 },
       columnStyles: { 0: { cellWidth: 22 }, 2: { halign: 'right', fontStyle: 'bold' } },
       margin: { left: 12, right: 12 },
+    })
+    y = lastY() + 8
+  }
+
+  // ---- Saldos por cobrar ----
+  if (pendings.length) {
+    autoTable(doc, {
+      startY: y,
+      head: [['Saldo por cobrar', 'Fecha', 'Monto']],
+      body: [
+        ...pendings.map((p) => [p.client, fmtDate(p.date), money(p.amount)]),
+        ['TOTAL POR COBRAR', '', money(pendingTotal)],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: BRAND.copperRGB, textColor: 255, fontStyle: 'bold', fontSize: 9 },
+      styles: { fontSize: 8.5, cellPadding: 2 },
+      columnStyles: { 1: { cellWidth: 26 }, 2: { halign: 'right', fontStyle: 'bold', cellWidth: 30 } },
+      margin: { left: 12, right: 12 },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.row.index === pendings.length) data.cell.styles.fontStyle = 'bold'
+      },
     })
     y = lastY() + 8
   }
@@ -197,6 +232,7 @@ export async function exportReportExcel(
   scopeLabel: string,
   settings: Settings,
   range: Range,
+  pendings: Pending[] = [],
 ): Promise<void> {
   const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
@@ -262,11 +298,14 @@ export async function exportReportExcel(
     c.alignment = { horizontal: 'center' }
   })
 
+  const pendingTotal = pendings.reduce((sum, p) => sum + p.amount, 0)
   const totals: [string, number, string][] = [
     ['Ingresos', summary.income, BRAND.green],
     ['Egresos', summary.expense, BRAND.rose],
     ['Balance', summary.balance, summary.balance >= 0 ? BRAND.teal : BRAND.rose],
   ]
+  // Va al final y aparte: es dinero por cobrar, todavía no entra al balance
+  if (pendings.length) totals.push(['Saldos por cobrar', pendingTotal, BRAND.rose])
   totals.forEach(([label, value, color], i) => {
     const r = s1.getRow(10 + i)
     r.getCell(2).value = label
@@ -279,7 +318,7 @@ export async function exportReportExcel(
   })
 
   // Desglose por sección
-  let row = 15
+  let row = 12 + totals.length
   if (summary.expenseByCategory.length || summary.incomeByCategory.length) {
     s1.getCell(`B${row}`).value = 'Desglose por sección'
     s1.getCell(`B${row}`).font = { bold: true, size: 12, color: { argb: argb(BRAND.navy) } }
@@ -310,6 +349,47 @@ export async function exportReportExcel(
       r.getCell(2).font = { color: { argb: argb(tipo === 'Ingreso' ? BRAND.green : BRAND.rose) } }
       row += 1
     }
+  }
+
+  // ---------- Hoja: Saldos por cobrar ----------
+  if (pendings.length) {
+    const sp = wb.addWorksheet('Saldos por cobrar', { views: [{ state: 'frozen', ySplit: 1, showGridLines: false }] })
+    sp.columns = [
+      { header: 'Cliente u obra', key: 'cliente', width: 34 },
+      { header: 'Fecha', key: 'fecha', width: 14 },
+      { header: 'Nota', key: 'nota', width: 30 },
+      { header: 'Monto por cobrar', key: 'monto', width: 18 },
+    ]
+    const hp = sp.getRow(1)
+    hp.height = 22
+    hp.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(BRAND.navy) } }
+      cell.alignment = { vertical: 'middle', horizontal: 'center' }
+      cell.border = thinBorder
+    })
+    pendings.forEach((p) => {
+      const r = sp.addRow({
+        cliente: p.client,
+        fecha: new Date(p.date + 'T00:00:00'),
+        nota: p.note ?? '',
+        monto: p.amount,
+      })
+      r.getCell('fecha').numFmt = 'dd/mm/yyyy'
+      r.getCell('monto').numFmt = currencyFmt
+      r.eachCell((cell) => (cell.border = thinBorder))
+    })
+    const last = sp.rowCount + 1
+    const trp = sp.getRow(last)
+    trp.getCell(3).value = 'TOTAL POR COBRAR'
+    trp.getCell(4).value = { formula: `SUM(D2:D${last - 1})` }
+    ;[3, 4].forEach((c) => {
+      const cell = trp.getCell(c)
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(BRAND.teal) } }
+      cell.border = thinBorder
+    })
+    trp.getCell(4).numFmt = currencyFmt
   }
 
   // ---------- Hoja: Movimientos ----------
@@ -382,25 +462,32 @@ export async function exportReportExcel(
 
 export interface BackupFile {
   app: 'geociv-cuentas'
-  version: 1
+  /** 1 = solo movimientos y secciones. 2 = incluye adelantos y saldos por cobrar. */
+  version: 1 | 2
   exportedAt: string
   settings: Settings | undefined
   categories: Category[]
   transactions: Transaction[]
+  advances?: Advance[]
+  pendings?: Pending[]
 }
 
 export function exportBackup(
   transactions: Transaction[],
   categories: Category[],
   settings: Settings | undefined,
+  pendings: Pending[] = [],
+  advances: Advance[] = [],
 ): void {
   const data: BackupFile = {
     app: 'geociv-cuentas',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     settings,
     categories,
     transactions,
+    advances,
+    pendings,
   }
   triggerDownload(
     new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),

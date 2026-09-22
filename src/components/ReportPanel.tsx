@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import { addDays, addMonths, addWeeks, addYears } from 'date-fns'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import type { Category, Settings, Transaction } from '../db/types'
+import type { Category, Pending, Settings, Transaction } from '../db/types'
 import { rangeFor, type Period } from '../lib/dates'
 import { formatMoney } from '../lib/money'
 import { seriesFor, summarize, type MethodBreakdown } from '../lib/reports'
 import { exportReportExcel, exportReportPDF } from '../lib/export'
-import { IconBank, IconCash, IconChevronLeft, IconChevronRight, IconExcel, IconPdf } from './Icons'
+import { IconBank, IconCash, IconChevronLeft, IconChevronRight, IconClock, IconExcel, IconPdf } from './Icons'
 
 const PERIOD_LABEL: Record<Period, string> = {
   daily: 'Diario',
@@ -21,9 +21,11 @@ interface Props {
   settings: Settings
   /** Etiqueta del alcance (ej. "Oficina", "Proyecto 1", "General – Empresa"). */
   scopeLabel: string
+  /** Saldos por cobrar del mismo alcance. No entran al balance del período. */
+  pendings?: Pending[]
 }
 
-export function ReportPanel({ transactions, categories, settings, scopeLabel }: Props) {
+export function ReportPanel({ transactions, categories, settings, scopeLabel, pendings = [] }: Props) {
   const money = (n: number) => formatMoney(n, settings)
   const [period, setPeriod] = useState<Period>('monthly')
   const [ref, setRef] = useState<Date>(new Date())
@@ -32,6 +34,9 @@ export function ReportPanel({ transactions, categories, settings, scopeLabel }: 
   const range = useMemo(() => rangeFor(period, ref, settings.weekStartsOn), [period, ref, settings.weekStartsOn])
   const summary = useMemo(() => summarize(transactions, categories, range), [transactions, categories, range])
   const series = useMemo(() => seriesFor(transactions, range, period), [transactions, range, period])
+  // Los pendientes son un saldo vivo, no un movimiento del período: se muestran
+  // completos (lo que está por cobrar hoy), sin filtrar por el rango de fechas.
+  const pendingTotal = useMemo(() => pendings.reduce((sum, p) => sum + p.amount, 0), [pendings])
 
   function shift(dir: -1 | 1) {
     if (period === 'daily') setRef((d) => addDays(d, dir))
@@ -78,6 +83,33 @@ export function ReportPanel({ transactions, categories, settings, scopeLabel }: 
         <SummaryCard label="Balance" value={money(summary.balance)} className={summary.balance >= 0 ? 'text-teal-600' : 'text-rose-500'} />
       </div>
 
+      {/* Saldos por cobrar (no entran al balance) */}
+      {pendings.length > 0 && (
+        <div className="card p-4">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-500/15 text-amber-500">
+              <IconClock width={20} height={20} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-slate-400">Saldos por cobrar · al día de hoy</p>
+              <p className="text-lg font-bold tabular-nums text-amber-500">{money(pendingTotal)}</p>
+            </div>
+            <span className="shrink-0 text-xs text-slate-400">
+              {pendings.length} pendiente{pendings.length > 1 ? 's' : ''}
+            </span>
+          </div>
+          <ul className="mt-3 space-y-1 border-t border-black/5 pt-2 text-xs dark:border-white/5">
+            {pendings.slice(0, 6).map((p) => (
+              <li key={p.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-slate-500 dark:text-silver-400">{p.client}</span>
+                <span className="shrink-0 font-semibold tabular-nums text-amber-500">{money(p.amount)}</span>
+              </li>
+            ))}
+            {pendings.length > 6 && <li className="text-slate-400">…y {pendings.length - 6} más.</li>}
+          </ul>
+        </div>
+      )}
+
       {/* Gráfica de barras */}
       {series.length > 0 && (
         <div className="card p-4">
@@ -108,7 +140,7 @@ export function ReportPanel({ transactions, categories, settings, scopeLabel }: 
           onClick={async () => {
             setExporting('pdf')
             try {
-              await exportReportPDF(summary, categories, settings, range, PERIOD_LABEL[period], scopeLabel)
+              await exportReportPDF(summary, categories, settings, range, PERIOD_LABEL[period], scopeLabel, pendings)
             } finally {
               setExporting(null)
             }
@@ -122,7 +154,7 @@ export function ReportPanel({ transactions, categories, settings, scopeLabel }: 
           onClick={async () => {
             setExporting('excel')
             try {
-              await exportReportExcel(summary, categories, PERIOD_LABEL[period], scopeLabel, settings, range)
+              await exportReportExcel(summary, categories, PERIOD_LABEL[period], scopeLabel, settings, range, pendings)
             } finally {
               setExporting(null)
             }

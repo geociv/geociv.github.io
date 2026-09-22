@@ -10,7 +10,7 @@ interface Props {
 }
 
 export function ReportsView({ projectId, onProjectChange }: Props) {
-  const { transactions, categories, settings, account, activeAccount } = useAppData()
+  const { transactions, categories, pendings, settings, account, activeAccount } = useAppData()
 
   const projects = useMemo(
     () => (activeAccount === 'proyectos' ? sectionsOfAccount(categories, activeAccount) : []),
@@ -21,6 +21,12 @@ export function ReportsView({ projectId, onProjectChange }: Props) {
     if (!projectId) return transactions
     return transactions.filter((t) => rootSectionId(categories, t.categoryId) === projectId)
   }, [transactions, categories, projectId])
+
+  // Al filtrar por proyecto, solo los pendientes de ese proyecto
+  const filteredPendings = useMemo(() => {
+    if (!projectId) return pendings
+    return pendings.filter((p) => p.categoryId && rootSectionId(categories, p.categoryId) === projectId)
+  }, [pendings, categories, projectId])
 
   const projectName = projects.find((p) => p.id === projectId)?.name
   const scopeLabel = account.name + (projectName ? ` · ${projectName}` : '')
@@ -41,7 +47,13 @@ export function ReportsView({ projectId, onProjectChange }: Props) {
         </label>
       )}
 
-      <ReportPanel transactions={filtered} categories={categories} settings={settings} scopeLabel={scopeLabel} />
+      <ReportPanel
+        transactions={filtered}
+        categories={categories}
+        settings={settings}
+        scopeLabel={scopeLabel}
+        pendings={filteredPendings}
+      />
     </div>
   )
 }

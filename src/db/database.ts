@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie'
-import { DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, LEGACY_PINS, type Advance, type Category, type Settings, type Transaction } from './types'
+import { DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, LEGACY_PINS, type Advance, type Category, type Pending, type Settings, type Transaction } from './types'
 
 /**
  * Base de datos local (IndexedDB) — es la fuente de la verdad.
@@ -10,6 +10,7 @@ export class GeoCivDB extends Dexie {
   transactions!: Table<Transaction, string>
   categories!: Table<Category, string>
   advances!: Table<Advance, string>
+  pendings!: Table<Pending, string>
   settings!: Table<Settings, string>
 
   constructor() {
@@ -45,6 +46,14 @@ export class GeoCivDB extends Dexie {
       transactions: 'id, account, date, type, categoryId, updatedAt, deleted',
       categories: 'id, account, scope, parentId, updatedAt, deleted',
       advances: 'id, account, updatedAt, deleted',
+      settings: 'id',
+    })
+    // v5: saldos pendientes por cobrar (tampoco afectan el balance)
+    this.version(5).stores({
+      transactions: 'id, account, date, type, categoryId, updatedAt, deleted',
+      categories: 'id, account, scope, parentId, updatedAt, deleted',
+      advances: 'id, account, updatedAt, deleted',
+      pendings: 'id, account, updatedAt, deleted',
       settings: 'id',
     })
   }

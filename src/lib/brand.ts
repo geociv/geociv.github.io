@@ -5,6 +5,7 @@ export const BRAND = {
   teal: '#1BA3A3',
   tealRGB: [27, 163, 163] as [number, number, number],
   copper: '#C07F3C',
+  copperRGB: [192, 127, 60] as [number, number, number],
   green: '#16A34A',
   greenRGB: [22, 163, 74] as [number, number, number],
   rose: '#E11D48',
