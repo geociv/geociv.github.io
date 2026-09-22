@@ -1,6 +1,6 @@
 import { db, DEFAULT_SETTINGS, uid } from './database'
 import { requestSync } from '../lib/sync'
-import type { AccountId, Advance, Category, PaymentMethod, Pending, Settings, Transaction, TxType } from './types'
+import type { AccountId, Advance, Category, CategoryScope, PaymentMethod, Pending, Settings, Transaction, TxType } from './types'
 
 export interface TxInput {
   account: AccountId
@@ -125,6 +125,19 @@ export async function deleteAdvance(id: string): Promise<void> {
 
 export function liveAdvances() {
   return db.advances.filter((a) => !a.deleted).toArray()
+}
+
+/** Aplica de una sola vez los tipos propuestos por `proposeScopeFixes`. */
+export async function applyScopeFixes(fixes: { id: string; proposed: CategoryScope }[]): Promise<number> {
+  const now = Date.now()
+  const rows: Category[] = []
+  for (const f of fixes) {
+    const cat = await db.categories.get(f.id)
+    if (cat) rows.push({ ...cat, scope: f.proposed, updatedAt: now })
+  }
+  if (rows.length) await db.categories.bulkPut(rows)
+  requestSync()
+  return rows.length
 }
 
 // ===== Saldos pendientes por cobrar =====

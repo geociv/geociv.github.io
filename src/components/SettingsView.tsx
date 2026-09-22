@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
 import { useAppData } from '../state/AppData'
 import { db } from '../db/database'
-import { addBank, addCategory, deleteCategory, removeBank, resetData, updateCategory, updateSettings } from '../db/repo'
+import { addBank, addCategory, applyScopeFixes, deleteCategory, removeBank, resetData, updateCategory, updateSettings } from '../db/repo'
 import { ACCOUNTS, type AccountId, type Category, type CategoryScope, type Settings } from '../db/types'
-import { sectionsOfAccount, subsectionsOf } from '../lib/categories'
+import { proposeScopeFixes, sectionsOfAccount, subsectionsOf, type ScopeFix } from '../lib/categories'
+import type { Transaction } from '../db/types'
 import { exportBackup, parseBackup } from '../lib/export'
 import { ImportExcel } from './ImportExcel'
 import { isSyncConfigured } from '../lib/sync'
@@ -79,6 +80,9 @@ export function SettingsView() {
           La etiqueta <b>Ingreso / Egreso / Ambos</b> decide en qué lista aparece cada sección al registrar un
           movimiento. Tócala para cambiarla.
         </p>
+        {account.allowsIncome && (
+          <ScopeFixer categories={allCategories} transactions={allTransactions} account={activeAccount} />
+        )}
         <SectionManager categories={allCategories} account={activeAccount} allowsIncome={account.allowsIncome} />
       </Section>
 
@@ -409,6 +413,102 @@ function AccesoSettings({ settings }: { settings: Settings }) {
 
       <SaveButton dirty={dirty} saved={saved} onSave={save} />
     </Section>
+  )
+}
+
+/**
+ * Repara de una sola vez el tipo de las secciones, deduciéndolo de los
+ * movimientos que ya tienen. Hace falta porque las importaciones viejas
+ * dejaban todas las secciones como "Ambos".
+ */
+function ScopeFixer({
+  categories,
+  transactions,
+  account,
+}: {
+  categories: Category[]
+  transactions: Transaction[]
+  account: AccountId
+}) {
+  const [fixes, setFixes] = useState<ScopeFix[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState('')
+
+  function review() {
+    setDone('')
+    setFixes(proposeScopeFixes(categories, transactions, account))
+  }
+
+  async function apply() {
+    if (!fixes?.length) return
+    setBusy(true)
+    try {
+      const n = await applyScopeFixes(fixes)
+      setDone(`✓ Se corrigieron ${n} secciones.`)
+      setFixes(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-teal-500/40 bg-teal-500/5 p-3">
+      <p className="mb-2 text-sm text-slate-600 dark:text-silver-300">
+        ¿Muchas secciones dicen <b>Ambos</b>? Puedo deducir el tipo de cada una mirando los movimientos que ya tiene.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={review}
+          className="rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-600"
+        >
+          Revisar tipos automáticamente
+        </button>
+        {fixes !== null && (
+          <button onClick={() => { setFixes(null); setDone('') }} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-white/5">
+            Cancelar
+          </button>
+        )}
+      </div>
+
+      {fixes !== null && fixes.length === 0 && (
+        <p className="mt-2 text-sm text-emerald-600">✓ Todas las secciones ya tienen el tipo correcto.</p>
+      )}
+
+      {fixes !== null && fixes.length > 0 && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs font-medium text-slate-500">Cambios propuestos ({fixes.length}):</p>
+          <ul className="max-h-64 space-y-1 overflow-y-auto text-xs">
+            {fixes.map((f) => (
+              <li key={f.id} className="flex items-center gap-2 rounded-lg bg-white/60 px-2 py-1.5 dark:bg-navy-900/60">
+                <span className="min-w-0 flex-1 truncate">
+                  {f.parentName ? `${f.parentName} › ` : ''}
+                  <b>{f.name}</b>
+                  <span className="ml-1 text-slate-400">
+                    ({f.income} ing · {f.expense} egr)
+                  </span>
+                </span>
+                <span className="shrink-0 text-slate-400">{SCOPE_LABEL[f.current]} →</span>
+                <span className={`shrink-0 rounded px-1.5 py-0.5 font-semibold uppercase ${SCOPE_STYLE[f.proposed]}`}>
+                  {SCOPE_LABEL[f.proposed]}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <button
+            onClick={apply}
+            disabled={busy}
+            className="w-full rounded-lg bg-teal-500 py-2.5 text-sm font-semibold text-white hover:bg-teal-600 disabled:opacity-40"
+          >
+            {busy ? 'Aplicando…' : `Aplicar los ${fixes.length} cambios`}
+          </button>
+          <p className="text-xs text-slate-400">
+            Las secciones sin movimientos no se tocan. Después puedes ajustar cualquiera a mano.
+          </p>
+        </div>
+      )}
+
+      {done && <p className="mt-2 text-sm text-emerald-600">{done}</p>}
+    </div>
   )
 }
 
