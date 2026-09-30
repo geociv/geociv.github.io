@@ -22,6 +22,8 @@ export function ImportExcel() {
   const spec = TEMPLATE_SPEC[account]
   const optional = spec.headers.filter((h) => !spec.required.includes(h))
   const sections = useMemo(() => (parsed ? previewSections(parsed.rows) : []), [parsed])
+  const pendingRows = useMemo(() => (parsed ? parsed.rows.filter((r) => r.pending) : []), [parsed])
+  const pendingTotal = pendingRows.reduce((sum, r) => sum + (r.pending ?? 0), 0)
 
   function reset() {
     setParsed(null)
@@ -46,7 +48,10 @@ export function ImportExcel() {
     setBusy(true)
     try {
       const n = await commitImport(parsed.rows)
-      setStatus(`✓ Se importaron ${n} movimientos a ${account === 'oficina' ? 'Oficina' : 'Proyectos'}.`)
+      setStatus(
+        `✓ Se importaron ${n.transactions} movimientos a ${account === 'oficina' ? 'Oficina' : 'Proyectos'}` +
+          (n.pendings ? ` y ${n.pendings} saldos por cobrar.` : '.'),
+      )
       reset()
     } catch (e) {
       setStatus(`✕ Error al importar: ${(e as Error).message}`)
@@ -149,12 +154,17 @@ export function ImportExcel() {
         </div>
       )}
 
-      {/* Aviso no bloqueante */}
-      {parsed && !parsed.formatError && parsed.warning && (
-        <div className="rounded-xl border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-          {parsed.warning}
-        </div>
-      )}
+      {/* Avisos no bloqueantes */}
+      {parsed &&
+        !parsed.formatError &&
+        parsed.warnings.map((w) => (
+          <div
+            key={w}
+            className="rounded-xl border border-amber-300/60 bg-amber-50 p-3 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+          >
+            {w}
+          </div>
+        ))}
 
       {/* Vista previa */}
       {parsed && !parsed.formatError && (
@@ -164,11 +174,33 @@ export function ImportExcel() {
               {parsed.rows.length} listos para importar
             </span>
             {parsed.errors.length > 0 && (
-              <span className="rounded-lg bg-amber-500/10 px-2.5 py-1 font-medium text-amber-600">
+              <span className="rounded-lg bg-rose-500/10 px-2.5 py-1 font-medium text-rose-600">
                 {parsed.errors.length} con problemas (se omiten)
               </span>
             )}
+            {pendingRows.length > 0 && (
+              <span className="rounded-lg bg-amber-500/10 px-2.5 py-1 font-medium text-amber-600">
+                {pendingRows.length} saldos por cobrar · {money(pendingTotal)}
+              </span>
+            )}
           </div>
+
+          {/* Los problemas van primero: conviene corregir el Excel ANTES de importar */}
+          {parsed.errors.length > 0 && (
+            <div className="rounded-lg border border-rose-300/60 bg-rose-50 p-2.5 text-xs dark:border-rose-500/30 dark:bg-rose-500/10">
+              <p className="mb-1 font-semibold text-rose-700 dark:text-rose-300">
+                Corrige estas filas en el Excel y vuelve a subirlo antes de importar:
+              </p>
+              <ul className="space-y-0.5 text-rose-700/90 dark:text-rose-300/90">
+                {parsed.errors.slice(0, 15).map((e) => (
+                  <li key={e.rowNumber}>
+                    Fila {e.rowNumber}: {e.message}
+                  </li>
+                ))}
+                {parsed.errors.length > 15 && <li>…y {parsed.errors.length - 15} más.</li>}
+              </ul>
+            </div>
+          )}
 
           {parsed.rows.length > 0 && (
             <div className="overflow-x-auto">
@@ -179,6 +211,7 @@ export function ImportExcel() {
                     <th className="py-1 pr-2">Tipo</th>
                     <th className="py-1 pr-2">{account === 'oficina' ? 'Sección' : 'Proyecto'}</th>
                     <th className="py-1 pr-2 text-right">Monto</th>
+                    {pendingRows.length > 0 && <th className="py-1 pr-2 text-right">Por cobrar</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -193,6 +226,11 @@ export function ImportExcel() {
                         {r.subsection ? ` › ${r.subsection}` : ''}
                       </td>
                       <td className="py-1 pr-2 text-right tabular-nums">{money(r.amount)}</td>
+                      {pendingRows.length > 0 && (
+                        <td className="py-1 pr-2 text-right tabular-nums text-amber-600">
+                          {r.pending ? money(r.pending) : ''}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -236,18 +274,6 @@ export function ImportExcel() {
             </div>
           )}
 
-          {parsed.errors.length > 0 && (
-            <details className="text-xs">
-              <summary className="cursor-pointer text-amber-600">Ver filas con problemas</summary>
-              <ul className="mt-1 space-y-0.5 text-slate-500">
-                {parsed.errors.slice(0, 10).map((e) => (
-                  <li key={e.rowNumber}>
-                    Fila {e.rowNumber}: {e.message}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
 
           <div className="flex flex-wrap gap-2">
             <button

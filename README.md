@@ -162,7 +162,7 @@ src/
 En _Ajustes → Importar desde Excel_:
 
 1. **Descargar plantilla Excel** — trae las columnas exactas y una hoja *Instrucciones* que explica cada una:
-   `Fecha, Tipo, Monto, Sección` (o `Proyecto`)`, Subsección, Tipo de sección, Descripción, Método, Banco, Nota`.
+   `Fecha, Tipo, Monto, Sección` (o `Proyecto`)`, Subsección, Tipo de sección, Descripción, Método, Banco, Nota, Por cobrar`.
 2. Pegar/acomodar los datos históricos en esa plantilla.
 3. Elegir **cuenta por defecto** (para filas sin columna `Cuenta`) y el **formato de fecha** (Día/Mes/Año o Mes/Día/Año).
 4. Subir el archivo y revisar la **vista previa**: muestra las primeras filas ya interpretadas y lista las filas con problemas (se omiten, no bloquean el resto).
@@ -189,4 +189,7 @@ Notas:
 - Acepta `.xlsx`, `.xls` y `.csv`. Reconoce fechas reales de Excel, texto `dd/mm/aaaa` y `aaaa-mm-dd`, y montos con coma o punto decimal (`1.250,75`).
 - En la cuenta **Oficina**, si no existe la columna `Tipo` se asume `Egreso` en todas las filas y la vista previa lo avisa. En **Proyectos** la columna `Tipo` es obligatoria.
 - Dentro de un mismo día, los movimientos quedan en el mismo orden que traía el Excel.
+- **Columna `Por cobrar`** (opcional, solo ingresos): lo que falta cobrar de ese trabajo. Crea un saldo por cobrar a nombre de la `Descripción`, ligado a ese ingreso y a su sección. En egresos se ignora con un aviso.
+- Se rechazan las fechas **anteriores al año 2000 o más de un año en el futuro** (típico: `2029` por `2026`, o un número suelto como `60` que Excel muestra como 1900). La vista previa las lista para corregirlas en el Excel antes de importar.
+- Si el archivo repite la fila de encabezados a mitad de hoja (por ejemplo, para separar ingresos de egresos), esa fila se salta sola.
 - Conviene usar **Exportar respaldo** antes de importar (hay un botón para eso en la misma pantalla).

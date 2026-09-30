@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx'
 import { db, uid } from '../db/database'
 import { requestSync } from './sync'
 import { roundMoney } from './money'
-import type { AccountId, Category, CategoryScope, PaymentMethod, Transaction, TxType } from '../db/types'
+import type { AccountId, Category, CategoryScope, PaymentMethod, Pending, Transaction, TxType } from '../db/types'
 
 const PALETTE = ['#2563eb', '#16a34a', '#c026d3', '#dc2626', '#d97706', '#0284c7', '#7c3aed', '#0d9488']
 
@@ -14,12 +14,12 @@ const PALETTE = ['#2563eb', '#16a34a', '#c026d3', '#dc2626', '#d97706', '#0284c7
  */
 export const TEMPLATE_SPEC: Record<AccountId, { headers: string[]; required: string[] }> = {
   oficina: {
-    headers: ['Fecha', 'Tipo', 'Monto', 'Sección', 'Subsección', 'Tipo de sección', 'Descripción', 'Método', 'Banco', 'Nota'],
+    headers: ['Fecha', 'Tipo', 'Monto', 'Sección', 'Subsección', 'Tipo de sección', 'Descripción', 'Método', 'Banco', 'Nota', 'Por cobrar'],
     // En Oficina la columna Tipo puede faltar: se asume Egreso (y se avisa).
     required: ['Fecha', 'Monto', 'Sección'],
   },
   proyectos: {
-    headers: ['Fecha', 'Tipo', 'Monto', 'Proyecto', 'Subsección', 'Tipo de sección', 'Descripción', 'Método', 'Banco', 'Nota'],
+    headers: ['Fecha', 'Tipo', 'Monto', 'Proyecto', 'Subsección', 'Tipo de sección', 'Descripción', 'Método', 'Banco', 'Nota', 'Por cobrar'],
     required: ['Fecha', 'Tipo', 'Monto', 'Proyecto'],
   },
 }
@@ -43,6 +43,8 @@ export interface ImportRow {
   paymentMethod?: PaymentMethod
   bank?: string
   note?: string
+  /** Columna "Por cobrar": saldo que falta cobrar de este ingreso. */
+  pending?: number
 }
 
 export interface ImportError {
@@ -56,8 +58,8 @@ export interface ParsedImport {
   totalRows: number
   /** Si el archivo no cumple el formato, aquí va el motivo y `rows` viene vacío. */
   formatError: string | null
-  /** Aviso no bloqueante (ej. falta la columna Tipo y se asume Egreso). */
-  warning: string | null
+  /** Avisos no bloqueantes (ej. falta la columna Tipo y se asume Egreso). */
+  warnings: string[]
 }
 
 // ---------- Plantillas ----------
@@ -68,10 +70,10 @@ export function downloadTemplate(account: AccountId): void {
     account === 'oficina'
       ? [
           { Fecha: '15/01/2026', Tipo: 'Egreso', Monto: 320.5, 'Sección': 'Sueldos', 'Subsección': '', 'Tipo de sección': 'Egreso', 'Descripción': 'Sueldo enero', 'Método': 'Efectivo', Banco: '', Nota: '' },
-          { Fecha: '18/01/2026', Tipo: 'Ingreso', Monto: 500, 'Sección': 'Reembolsos', 'Subsección': '', 'Tipo de sección': 'Ingreso', 'Descripción': 'Reembolso caja chica', 'Método': 'Efectivo', Banco: '', Nota: '' },
+          { Fecha: '18/01/2026', Tipo: 'Ingreso', Monto: 500, 'Sección': 'Levantamientos', 'Subsección': '', 'Tipo de sección': 'Ingreso', 'Descripción': 'Levantamiento Juan Pérez (50%)', 'Método': 'Efectivo', Banco: '', Nota: '', 'Por cobrar': 500 },
         ]
       : [
-          { Fecha: '15/01/2026', Tipo: 'Ingreso', Monto: 5000, Proyecto: 'Proyecto 1', 'Subsección': 'Anticipos', 'Tipo de sección': 'Ambos', 'Descripción': 'Anticipo de obra', 'Método': 'Transferencia', Banco: 'Banco Pichincha', Nota: 'F-001' },
+          { Fecha: '15/01/2026', Tipo: 'Ingreso', Monto: 5000, Proyecto: 'Proyecto 1', 'Subsección': 'Anticipos', 'Tipo de sección': 'Ambos', 'Descripción': 'Anticipo de obra', 'Método': 'Transferencia', Banco: 'Banco Pichincha', Nota: 'F-001', 'Por cobrar': 5000 },
           { Fecha: '20/01/2026', Tipo: 'Egreso', Monto: 1250.75, Proyecto: 'Proyecto 1', 'Subsección': 'Materiales', 'Tipo de sección': 'Ambos', 'Descripción': 'Cemento', 'Método': 'Efectivo', Banco: '', Nota: '' },
         ]
 
@@ -96,6 +98,10 @@ export function downloadTemplate(account: AccountId): void {
     ['Método', 'Efectivo o Transferencia (opcional).'],
     ['Banco', 'Solo si el método es Transferencia.'],
     ['Nota', 'Información extra: Nº de factura, proveedor, observaciones.'],
+    [
+      'Por cobrar',
+      'Opcional, solo en ingresos. Lo que falta cobrar de ese trabajo (ej. el otro 50%). Se crea un saldo por cobrar a nombre de la Descripción; no suma al balance hasta cobrarlo.',
+    ],
   ]
   const wsHelp = XLSX.utils.aoa_to_sheet(help)
   wsHelp['!cols'] = [{ wch: 18 }, { wch: 82 }]
@@ -218,7 +224,7 @@ function pick(row: Record<string, unknown>, names: string[]): unknown {
 // ---------- Lectura y validación ----------
 
 export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = true): ParsedImport {
-  const empty: ParsedImport = { rows: [], errors: [], totalRows: 0, formatError: null, warning: null }
+  const empty: ParsedImport = { rows: [], errors: [], totalRows: 0, formatError: null, warnings: [] }
   let wb: XLSX.WorkBook
   try {
     wb = XLSX.read(data, { cellDates: true })
@@ -242,17 +248,26 @@ export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = 
 
   // En Oficina la columna Tipo puede no venir: se asume Egreso, pero se avisa.
   const hasTypeColumn = present.includes(norm('Tipo'))
-  const warning = hasTypeColumn
-    ? null
-    : 'El archivo no trae la columna "Tipo", así que todas las filas se importarán como EGRESO. Si hay ingresos, agrégala a la plantilla y vuelve a subir el archivo.'
+  const warnings: string[] = []
+  if (!hasTypeColumn)
+    warnings.push(
+      'El archivo no trae la columna "Tipo", así que todas las filas se importarán como EGRESO. Si hay ingresos, agrégala a la plantilla y vuelve a subir el archivo.',
+    )
 
   const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
   const rows: ImportRow[] = []
   const errors: ImportError[] = []
+  const pendingOnExpense: number[] = []
+  const maxDate = futureLimit()
 
   raw.forEach((r, i) => {
-    const rowNumber = i + 2 // +1 encabezado, +1 base 1
+    // sheet_to_json se salta las filas en blanco: __rowNum__ da la fila real
+    // del Excel, para que los errores apunten a la fila que el usuario ve.
+    const excelRow = (r as { __rowNum__?: number }).__rowNum__
+    const rowNumber = excelRow !== undefined ? excelRow + 1 : i + 2
     if (Object.values(r).every((v) => clean(v) === '')) return
+    // Encabezado repetido a mitad de hoja (ej. para separar ingresos de egresos)
+    if (norm(clean(pick(r, ['Fecha']))) === 'fecha' && norm(clean(pick(r, ['Monto']))) === 'monto') return
 
     const date = parseDate(pick(r, ['Fecha', 'Date']), dayFirst)
     const amount = parseAmountCell(pick(r, ['Monto', 'Valor', 'Importe', 'Amount']))
@@ -266,12 +281,21 @@ export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = 
     // Ambas cuentas manejan ingresos y egresos. Si la columna Tipo no existe
     // en el archivo (solo permitido en Oficina), se asume Egreso.
     const type: TxType | null = hasTypeColumn ? parseType(pick(r, ['Tipo', 'Type'])) : 'expense'
+    const pendingCell = pick(r, ['Por cobrar', 'Saldo por cobrar', 'Saldo pendiente', 'Pendiente'])
+    const pending = clean(pendingCell) === '' ? 0 : parseAmountCell(pendingCell)
 
     if (!date) return errors.push({ rowNumber, message: 'Fecha inválida o vacía' })
+    // Un año mal escrito (2029 por 2026) o un número suelto en la celda de fecha
+    // (60 → 1900) mandaría el movimiento a un período donde nadie lo busca.
+    if (date < MIN_DATE || date > maxDate)
+      return errors.push({ rowNumber, message: `Fecha fuera de rango (${showDate(date)}): revisa el año` })
     if (!isFinite(amount) || amount <= 0) return errors.push({ rowNumber, message: 'Monto inválido, vacío o cero' })
     if (!type) return errors.push({ rowNumber, message: 'Tipo debe ser "Ingreso" o "Egreso"' })
     if (!section)
       return errors.push({ rowNumber, message: account === 'oficina' ? 'Falta la Sección' : 'Falta el Proyecto' })
+    if (!isFinite(pending)) return errors.push({ rowNumber, message: '"Por cobrar" no es un monto válido' })
+    // El saldo por cobrar solo tiene sentido en un ingreso (el anticipo cobrado)
+    if (pending > 0 && type === 'expense') pendingOnExpense.push(rowNumber)
 
     rows.push({
       rowNumber,
@@ -286,11 +310,25 @@ export function parseWorkbook(data: ArrayBuffer, account: AccountId, dayFirst = 
       paymentMethod,
       bank: paymentMethod === 'transferencia' ? bank || undefined : undefined,
       note: note || undefined,
+      pending: type === 'income' && pending > 0 ? pending : undefined,
     })
   })
 
-  return { rows, errors, totalRows: raw.length, formatError: null, warning }
+  if (pendingOnExpense.length)
+    warnings.push(
+      `${pendingOnExpense.length} egreso(s) traen valor en "Por cobrar" (filas ${pendingOnExpense.join(', ')}). Se importan como egreso normal y se ignora ese valor: el saldo por cobrar solo aplica a ingresos.`,
+    )
+
+  return { rows, errors, totalRows: raw.length, formatError: null, warnings }
 }
+
+/** Fechas aceptadas: desde el año 2000 hasta un año después de hoy. */
+const MIN_DATE = '2000-01-01'
+function futureLimit(): string {
+  const d = new Date()
+  return `${d.getFullYear() + 1}-${two(d.getMonth() + 1)}-${two(d.getDate())}`
+}
+const showDate = (iso: string) => iso.split('-').reverse().join('/')
 
 // ---------- Guardado ----------
 
@@ -368,7 +406,7 @@ export function previewSections(rows: ImportRow[]): SectionPreview[] {
  * Inserta los movimientos, creando las secciones/subsecciones que falten con el
  * tipo (ingreso / egreso / ambos) que les corresponde según el archivo.
  */
-export async function commitImport(rows: ImportRow[]): Promise<number> {
+export async function commitImport(rows: ImportRow[]): Promise<{ transactions: number; pendings: number }> {
   const now = Date.now()
   const scopes = collectScopes(rows)
   const cats: Category[] = await db.categories.filter((c) => !c.deleted).toArray()
@@ -399,6 +437,7 @@ export async function commitImport(rows: ImportRow[]): Promise<number> {
   }
 
   const txs: Transaction[] = []
+  const pendings: Pending[] = []
 
   rows.forEach((r, i) => {
     const key = sectionKeyOf(r)
@@ -445,8 +484,9 @@ export async function commitImport(rows: ImportRow[]): Promise<number> {
       leafId = sub.id
     }
 
+    const txId = uid()
     txs.push({
-      id: uid(),
+      id: txId,
       account: r.account,
       type: r.type,
       amount: r.amount,
@@ -461,13 +501,32 @@ export async function commitImport(rows: ImportRow[]): Promise<number> {
       updatedAt: now + i,
       deleted: false,
     })
+
+    // Columna "Por cobrar": el resto del trabajo queda como saldo pendiente,
+    // ligado a este ingreso y a su sección para registrarlo al cobrarlo.
+    if (r.pending && r.type === 'income') {
+      pendings.push({
+        id: uid(),
+        account: r.account,
+        client: r.description || r.subsection || r.section,
+        amount: r.pending,
+        date: r.date,
+        categoryId: leafId,
+        note: r.note,
+        sourceTxId: txId,
+        createdAt: now + i,
+        updatedAt: now + i,
+        deleted: false,
+      })
+    }
   })
 
-  await db.transaction('rw', db.categories, db.transactions, async () => {
+  await db.transaction('rw', db.categories, db.transactions, db.pendings, async () => {
     const toSave = [...newCats, ...widened.values()]
     if (toSave.length) await db.categories.bulkPut(toSave)
     await db.transactions.bulkPut(txs)
+    if (pendings.length) await db.pendings.bulkPut(pendings)
   })
   requestSync()
-  return txs.length
+  return { transactions: txs.length, pendings: pendings.length }
 }
