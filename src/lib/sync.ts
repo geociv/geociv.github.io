@@ -61,6 +61,11 @@ async function doSync(): Promise<SyncResult> {
   // sirve para no reenviar todo. El PULL NO usa marca (traía de menos por relojes
   // desincronizados entre equipos) — trae todo y fusiona por "el más nuevo gana".
   const pushWatermark = Number(localStorage.getItem(WATERMARK_KEY) ?? 0)
+  // La nueva marca es el momento en que EMPIEZA el envío, no cuando termina:
+  // un cambio hecho mientras esta sync está en vuelo queda por encima de la
+  // marca y sale en la siguiente. Con la hora del final se perdía para siempre
+  // (así quedaron subsecciones vivas en la nube con su sección ya borrada).
+  const startedAt = Date.now()
   const ws = SYNC_WORKSPACE
   let pushed = 0
   let pulled = 0
@@ -98,9 +103,9 @@ async function doSync(): Promise<SyncResult> {
   pushed += advResult.pushed + pendResult.pushed
   pulled += advResult.pulled + pendResult.pulled
 
-  const now = Date.now()
-  localStorage.setItem(WATERMARK_KEY, String(now))
-  return { pushed, pulled, at: new Date(now).toISOString() }
+  // -1: un cambio en el mismo milisegundo en que arrancó se reenvía (inofensivo)
+  localStorage.setItem(WATERMARK_KEY, String(startedAt - 1))
+  return { pushed, pulled, at: new Date().toISOString() }
 }
 
 interface SyncTable<T> {

@@ -80,14 +80,20 @@ export async function updateCategory(
   requestSync()
 }
 
-/** Borrado lógico. Si es una sección, arrastra sus subsecciones. */
+/**
+ * Borrado lógico. Si es una sección, arrastra sus subsecciones. Va en una sola
+ * transacción para que la sincronización nunca lea la sección borrada con sus
+ * subsecciones todavía vivas.
+ */
 export async function deleteCategory(id: string): Promise<void> {
   const now = Date.now()
-  const children = await db.categories.where('parentId').equals(id).toArray()
-  await db.categories.update(id, { deleted: true, updatedAt: now })
-  for (const child of children) {
-    await db.categories.update(child.id, { deleted: true, updatedAt: now })
-  }
+  await db.transaction('rw', db.categories, async () => {
+    const children = await db.categories.where('parentId').equals(id).toArray()
+    await db.categories.update(id, { deleted: true, updatedAt: now })
+    for (const child of children) {
+      await db.categories.update(child.id, { deleted: true, updatedAt: now })
+    }
+  })
   requestSync()
 }
 
