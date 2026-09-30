@@ -117,6 +117,17 @@ Genera la carpeta `dist/` con archivos estáticos. Formas de entregarla al clien
    create index if not exists idx_pend_ws_updated on pendings (workspace, "updatedAt");
    ```
 
+   > **Importante:** Supabase activa RLS por su cuenta en las tablas nuevas, y
+   > sin una política la app puede leer pero **no escribir** (el error es
+   > `new row violates row-level security policy`). La sincronización de esas
+   > tablas falla en silencio: solo deja un aviso en la consola. Después de
+   > crearlas, corre:
+   >
+   > ```sql
+   > create policy "acceso app" on advances for all to anon, authenticated using (true) with check (true);
+   > create policy "acceso app" on pendings for all to anon, authenticated using (true) with check (true);
+   > ```
+
 3. Habilitar **RLS** en ambas tablas con una política sencilla (o mantenerlas sin RLS para uso interno con la anon key). Para un solo cliente, lo más simple es una política que permita todo con la anon key.
 4. En **Project Settings → API**, copiar la **Project URL** y la **anon public key**.
 5. Crear el archivo `.env` (a partir de `.env.example`) con:
