@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAppData } from '../state/AppData'
 import { addAdvance, deleteAdvance } from '../db/repo'
+import { WORKERS } from '../db/types'
 import { fmtDate, todayISO } from '../lib/dates'
 import { formatMoney, parseAmount, sanitizeAmountInput } from '../lib/money'
 import { IconClose, IconPlus, IconTrash } from './Icons'
@@ -10,6 +11,8 @@ export function AdvancesSheet({ onClose }: { onClose: () => void }) {
   const money = (n: number) => formatMoney(n, settings)
 
   const [worker, setWorker] = useState('')
+  // "Otro": el nombre se escribe a mano porque no está en la lista
+  const [otherWorker, setOtherWorker] = useState(false)
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayISO())
   const [note, setNote] = useState('')
@@ -20,10 +23,11 @@ export function AdvancesSheet({ onClose }: { onClose: () => void }) {
 
   async function add() {
     const value = parseAmount(amount)
-    if (!worker.trim()) return setError('Escribe el nombre del trabajador.')
+    if (!worker.trim()) return setError(otherWorker ? 'Escribe el nombre del trabajador.' : 'Elige el trabajador.')
     if (!Number.isFinite(value) || value <= 0) return setError('Ingresa un monto válido.')
     await addAdvance({ account: activeAccount, worker: worker.trim(), amount: value, date, note })
     setWorker('')
+    setOtherWorker(false)
     setAmount('')
     setNote('')
     setDate(todayISO())
@@ -57,7 +61,15 @@ export function AdvancesSheet({ onClose }: { onClose: () => void }) {
           {/* Registrar nuevo adelanto */}
           <div className="mb-4 space-y-2.5 rounded-2xl border border-black/5 p-3 dark:border-white/10">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Registrar adelanto</p>
-            <input value={worker} onChange={(e) => { setWorker(e.target.value); setError('') }} placeholder="Nombre del trabajador" className="field" />
+            <div className="grid grid-cols-2 gap-2">
+              {WORKERS.map((w) => (
+                <WorkerChip key={w} label={w} active={!otherWorker && worker === w} onClick={() => { setWorker(w); setOtherWorker(false); setError('') }} />
+              ))}
+              <WorkerChip label="Otro…" active={otherWorker} onClick={() => { setWorker(''); setOtherWorker(true); setError('') }} />
+            </div>
+            {otherWorker && (
+              <input autoFocus value={worker} onChange={(e) => { setWorker(e.target.value); setError('') }} placeholder="Nombre del trabajador" className="field" />
+            )}
             <div className="grid grid-cols-2 gap-2.5">
               <input inputMode="decimal" value={amount} onChange={(e) => { setAmount(sanitizeAmountInput(e.target.value)); setError('') }} placeholder="Monto" className="field font-semibold tabular-nums" />
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="field" />
@@ -102,5 +114,21 @@ export function AdvancesSheet({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+  )
+}
+
+function WorkerChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`truncate rounded-xl border-2 px-2 py-2 text-sm font-medium transition ${
+        active
+          ? 'border-copper-500 bg-copper-500/10 text-copper-500'
+          : 'border-slate-200 bg-white text-slate-500 dark:border-navy-600 dark:bg-navy-900 dark:text-silver-400'
+      }`}
+    >
+      {label}
+    </button>
   )
 }

@@ -11,7 +11,7 @@ import { isSyncConfigured } from '../lib/sync'
 import { IconBank, IconCloud, IconDownload, IconFolder, IconPlus, IconTrash, IconUpload } from './Icons'
 
 export function SettingsView() {
-  const { allCategories, settings, allTransactions, allPendings, allAdvances, activeAccount, account } = useAppData()
+  const { allCategories, settings, allTransactions, allPendings, allAdvances, allFunds, activeAccount, account } = useAppData()
   const fileRef = useRef<HTMLInputElement>(null)
   const [status, setStatus] = useState('')
 
@@ -19,7 +19,7 @@ export function SettingsView() {
     try {
       const backup = parseBackup(await file.text())
       if (!confirm('Esto reemplazará los datos actuales con los del respaldo. ¿Continuar?')) return
-      await db.transaction('rw', db.transactions, db.categories, db.advances, db.pendings, db.settings, async () => {
+      await db.transaction('rw', [db.transactions, db.categories, db.advances, db.pendings, db.funds, db.settings], async () => {
         await db.transactions.clear()
         await db.categories.clear()
         await db.transactions.bulkPut(backup.transactions)
@@ -32,6 +32,11 @@ export function SettingsView() {
         if (backup.pendings) {
           await db.pendings.clear()
           await db.pendings.bulkPut(backup.pendings)
+        }
+        // Respaldos v1 y v2 no traen el dinero disponible
+        if (backup.funds) {
+          await db.funds.clear()
+          await db.funds.bulkPut(backup.funds)
         }
         if (backup.settings) await db.settings.put(backup.settings)
       })
@@ -100,7 +105,7 @@ export function SettingsView() {
       <Section title="Respaldo de datos">
         <p className="text-sm text-slate-500 dark:text-silver-400">Guarda una copia de todos los movimientos (de ambas cuentas), como copia de seguridad o para pasar datos entre equipos.</p>
         <div className="flex flex-wrap gap-2.5">
-          <button onClick={() => exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances)} className="flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600">
+          <button onClick={() => exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances, allFunds)} className="flex items-center gap-2 rounded-lg bg-teal-500 px-4 py-2 text-sm font-medium text-white hover:bg-teal-600">
             <IconDownload width={16} height={16} /> Exportar respaldo
           </button>
           <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-100 dark:border-navy-600 dark:hover:bg-white/5">
@@ -540,7 +545,7 @@ function ScopeToggle({ scope, onChange }: { scope: CategoryScope; onChange: (nex
  * y usa borrado lógico, así que el borrado también viaja al celular y a la nube.
  */
 function DangerZone() {
-  const { allTransactions, allCategories, settings, allPendings, allAdvances } = useAppData()
+  const { allTransactions, allCategories, settings, allPendings, allAdvances, allFunds } = useAppData()
   const [accounts, setAccounts] = useState<AccountId[]>(ACCOUNTS.map((a) => a.id))
   const [includeCategories, setIncludeCategories] = useState(true)
   const [confirmText, setConfirmText] = useState('')
@@ -558,7 +563,7 @@ function DangerZone() {
     setBusy(true)
     try {
       // Respaldo automático antes de borrar: el borrado no se puede deshacer.
-      exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances)
+      exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances, allFunds)
       const n = await resetData({ accounts, includeCategories })
       setResult(
         `✓ Listo. Se borraron ${n.transactions} movimientos` +
@@ -578,7 +583,7 @@ function DangerZone() {
       <h2 className="font-semibold text-rose-600">Borrar todos los datos</h2>
       <p className="text-sm text-slate-500 dark:text-silver-400">
         Deja la app en blanco para volver a importar desde cero. <b>No se puede deshacer</b>: antes de borrar se
-        descarga un respaldo automático. Se conservan la empresa, las contraseñas y los bancos. El borrado se
+        descarga un respaldo automático. Se conservan la empresa, las contraseñas, los bancos y el dinero disponible. El borrado se
         sincroniza: también desaparece en el celular y en la nube.
       </p>
 

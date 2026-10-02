@@ -1,22 +1,32 @@
 import { useMemo, useState } from 'react'
 import { useAppData } from '../state/AppData'
-import { rangeFor, fmtDateShort } from '../lib/dates'
+import { rangeFor, fmtDate, fmtDateShort } from '../lib/dates'
 import { formatMoney } from '../lib/money'
 import { summarize, totalBalance } from '../lib/reports'
 import { categoryPath, rootSectionId, sectionsOfAccount } from '../lib/categories'
-import { IconArrowDown, IconArrowUp, IconChevronRight, IconClock, IconFolder, IconPlus, IconWallet } from './Icons'
+import { fundPlaces } from '../lib/funds'
+import { IconArrowDown, IconArrowUp, IconBank, IconCash, IconChevronRight, IconClock, IconFolder, IconPlus, IconWallet } from './Icons'
 import { AdvancesSheet } from './AdvancesSheet'
+import { FundsSheet } from './FundsSheet'
 import { PendingsSheet } from './PendingsSheet'
 
 export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenProject: (id: string) => void }) {
-  const { transactions, categories, advances, pendings, settings, account, activeAccount } = useAppData()
+  const { transactions, categories, advances, pendings, funds, settings, account, activeAccount } = useAppData()
   const money = (n: number) => formatMoney(n, settings)
   const allowsIncome = account.allowsIncome
   const [showAdvances, setShowAdvances] = useState(false)
   const [showPendings, setShowPendings] = useState(false)
+  const [showFunds, setShowFunds] = useState(false)
 
   const advancesTotal = useMemo(() => advances.reduce((s, a) => s + a.amount, 0), [advances])
   const pendingsTotal = useMemo(() => pendings.reduce((s, p) => s + p.amount, 0), [pendings])
+  // Dinero disponible: solo los lugares con valor escrito, en el orden de la hoja
+  const fundRows = useMemo(
+    () => fundPlaces(activeAccount, settings.banks, funds).filter((p) => p.fund),
+    [activeAccount, settings.banks, funds],
+  )
+  const fundsTotal = useMemo(() => funds.reduce((s, f) => s + f.amount, 0), [funds])
+  const fundsUpdatedAt = useMemo(() => Math.max(0, ...funds.map((f) => f.updatedAt)), [funds])
 
   // Totales por proyecto (solo cuenta Proyectos)
   const projects = useMemo(() => {
@@ -74,6 +84,48 @@ export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenP
           <p className="mt-3 text-sm text-silver-400">{transactions.length} movimientos registrados</p>
         )}
       </div>
+
+      {/* Dinero disponible: efectivo y bancos escritos a mano (no afectan el balance) */}
+      <button
+        onClick={() => setShowFunds(true)}
+        className="card w-full p-4 text-left transition hover:ring-2 hover:ring-teal-500/40"
+      >
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-500/15 text-teal-600">
+            <IconCash width={20} height={20} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-slate-400">Dinero disponible</p>
+            <p className="text-lg font-bold tabular-nums text-teal-600">{money(fundsTotal)}</p>
+          </div>
+          <span className="flex items-center gap-1 rounded-lg bg-teal-500/10 px-3 py-1.5 text-xs font-semibold text-teal-600">
+            {fundRows.length > 0 ? 'Modificar' : 'Registrar'}
+            <IconChevronRight width={14} height={14} />
+          </span>
+        </div>
+        {fundRows.length > 0 && (
+          <>
+            <ul className="mt-3 space-y-1.5 border-t border-black/5 pt-3 dark:border-white/10">
+              {fundRows.map((p) => (
+                <li key={p.id} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="flex min-w-0 items-center gap-1.5 text-slate-600 dark:text-silver-300">
+                    {p.kind === 'efectivo' ? (
+                      <IconCash width={15} height={15} className="shrink-0 text-slate-400" />
+                    ) : (
+                      <IconBank width={15} height={15} className="shrink-0 text-slate-400" />
+                    )}
+                    <span className="truncate">{p.name}</span>
+                  </span>
+                  <span className="shrink-0 font-medium tabular-nums text-slate-500">{money(p.fund!.amount)}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-slate-400">
+              Actualizado el {fmtDate(new Date(fundsUpdatedAt).toISOString())} · no se suma al balance
+            </p>
+          </>
+        )}
+      </button>
 
       {/* Adelantos a trabajadores (no afectan el balance) */}
       <button
@@ -213,6 +265,7 @@ export function Dashboard({ onAdd, onOpenProject }: { onAdd: () => void; onOpenP
 
       {showAdvances && <AdvancesSheet onClose={() => setShowAdvances(false)} />}
       {showPendings && <PendingsSheet onClose={() => setShowPendings(false)} />}
+      {showFunds && <FundsSheet onClose={() => setShowFunds(false)} />}
     </div>
   )
 }

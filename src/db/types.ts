@@ -29,6 +29,9 @@ export function accountById(id: AccountId): AccountDef {
 /** Bancos/cooperativas iniciales. El usuario puede añadir más (ver Settings.banks). */
 export const DEFAULT_BANKS = ['Banco Pichincha', 'Cooperativa Jardín Azuayo']
 
+/** Trabajadores que se ofrecen como opciones al registrar un adelanto. */
+export const WORKERS = ['Fernando Castillo', 'Michael Condolo', 'Pedro González', 'Eysthin Medina', 'Yaman Lozano']
+
 /** Un movimiento contable: ingreso o egreso, dentro de una cuenta. */
 export interface Transaction {
   id: string
@@ -113,6 +116,27 @@ export interface Advance {
   createdAt: number
   updatedAt: number
   /** "Quitar" un adelanto = marcarlo borrado (ya liquidado). */
+  deleted?: boolean
+}
+
+export type FundKind = 'efectivo' | 'banco'
+
+/**
+ * Dinero disponible en efectivo o en un banco, ESCRITO A MANO. No se calcula
+ * con los movimientos ni afecta el balance: es lo que la empresa dice tener, y
+ * se actualiza a mano cuando cambia.
+ */
+export interface Fund {
+  /** Fijo por cuenta y lugar (ver `fundId`), para que la PC y el celular editen la misma fila. */
+  id: string
+  account: AccountId
+  kind: FundKind
+  /** 'Efectivo' o el nombre del banco/cooperativa. */
+  name: string
+  amount: number
+  createdAt: number
+  updatedAt: number
+  /** Se borra al dejar el valor vacío. */
   deleted?: boolean
 }
 

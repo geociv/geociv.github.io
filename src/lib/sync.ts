@@ -2,7 +2,7 @@ import { createClient, type RealtimeChannel, type SupabaseClient } from '@supaba
 import type { Table } from 'dexie'
 import { db } from '../db/database'
 import { SUPABASE_ANON_KEY, SUPABASE_URL, SYNC_CONFIGURED, SYNC_WORKSPACE } from '../config'
-import type { Advance, Category, Pending, Transaction } from '../db/types'
+import type { Advance, Category, Fund, Pending, Transaction } from '../db/types'
 
 /**
  * Sincronización con Supabase. Viene HORNEADA (ver config.ts) — el cliente no
@@ -96,12 +96,14 @@ async function doSync(): Promise<SyncResult> {
   pulled += await mergeRemote<Category>(remoteCat as RemoteRow[], db.categories)
   pulled += await mergeRemote<Transaction>(remoteTx as RemoteRow[], db.transactions)
 
-  // ADELANTOS y SALDOS PENDIENTES: tolerantes a fallos (la tabla en Supabase
-  // puede no existir aún). Si fallan, no rompen la sincronización principal.
+  // ADELANTOS, SALDOS PENDIENTES y DINERO DISPONIBLE: tolerantes a fallos (la
+  // tabla en Supabase puede no existir aún). Si fallan, no rompen la
+  // sincronización principal.
   const advResult = await syncOptionalTable<Advance>(sb, ws, 'advances', db.advances, pushWatermark)
   const pendResult = await syncOptionalTable<Pending>(sb, ws, 'pendings', db.pendings, pushWatermark)
-  pushed += advResult.pushed + pendResult.pushed
-  pulled += advResult.pulled + pendResult.pulled
+  const fundResult = await syncOptionalTable<Fund>(sb, ws, 'funds', db.funds, pushWatermark)
+  pushed += advResult.pushed + pendResult.pushed + fundResult.pushed
+  pulled += advResult.pulled + pendResult.pulled + fundResult.pulled
 
   // -1: un cambio en el mismo milisegundo en que arrancó se reenvía (inofensivo)
   localStorage.setItem(WATERMARK_KEY, String(startedAt - 1))
@@ -143,9 +145,9 @@ async function mergeRemote<T extends { id: string; updatedAt: number }>(
 }
 
 /**
- * Sincroniza una tabla "opcional" (adelantos, saldos pendientes). Si su SQL aún
- * no se corrió en Supabase, se omite con un aviso en consola en vez de tumbar
- * la sincronización de movimientos y secciones.
+ * Sincroniza una tabla "opcional" (adelantos, saldos pendientes, dinero
+ * disponible). Si su SQL aún no se corrió en Supabase, se omite con un aviso
+ * en consola en vez de tumbar la sincronización de movimientos y secciones.
  */
 async function syncOptionalTable<T extends { id: string; updatedAt: number }>(
   sb: SupabaseClient,
@@ -238,6 +240,9 @@ function startRealtime(): () => void {
     )
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pendings', filter }, (p) =>
       apply(db.pendings, p.new),
+    )
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'funds', filter }, (p) =>
+      apply(db.funds, p.new),
     )
     .subscribe()
 

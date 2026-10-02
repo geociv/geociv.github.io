@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, DEFAULT_SETTINGS, ensureSeed } from '../db/database'
-import { liveAdvances, liveCategories, livePendings, liveTransactions } from '../db/repo'
-import { accountById, DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, type AccountDef, type Advance, type Category, type Pending, type Settings, type Transaction } from '../db/types'
+import { liveAdvances, liveCategories, liveFunds, livePendings, liveTransactions } from '../db/repo'
+import { accountById, DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, type AccountDef, type Advance, type Category, type Fund, type Pending, type Settings, type Transaction } from '../db/types'
 
 const ACTIVE_KEY = 'geociv-active-account'
 
@@ -19,6 +19,9 @@ interface AppDataValue {
   advances: Advance[]
   /** Saldos por cobrar de la cuenta activa (solo los que siguen pendientes). */
   pendings: Pending[]
+  allFunds: Fund[]
+  /** Dinero disponible (efectivo y bancos) de la cuenta activa. */
+  funds: Fund[]
   settings: Settings
   activeAccount: string
   account: AccountDef
@@ -46,6 +49,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const allCategories = useLiveQuery(liveCategories, [], undefined)
   const allAdvances = useLiveQuery(liveAdvances, [], undefined)
   const allPendingRows = useLiveQuery(livePendings, [], undefined)
+  const allFundRows = useLiveQuery(liveFunds, [], undefined)
   const settings = useLiveQuery(() => db.settings.get('app'), [], undefined)
 
   const ready =
@@ -54,6 +58,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const txs = allTransactions ?? []
   const cats = allCategories ?? []
   const advs = allAdvances ?? []
+  const fnds = allFundRows ?? []
   // "Pendiente" = ni cobrado ni anulado. Lo cobrado ya vive como ingreso normal.
   const pends = useMemo(() => (allPendingRows ?? []).filter((p) => !p.settledAt), [allPendingRows])
 
@@ -61,6 +66,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const categories = useMemo(() => cats.filter((c) => c.account === activeAccount), [cats, activeAccount])
   const advances = useMemo(() => advs.filter((a) => a.account === activeAccount), [advs, activeAccount])
   const pendings = useMemo(() => pends.filter((p) => p.account === activeAccount), [pends, activeAccount])
+  const funds = useMemo(() => fnds.filter((f) => f.account === activeAccount), [fnds, activeAccount])
 
   const value: AppDataValue = {
     allTransactions: txs,
@@ -71,6 +77,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     categories,
     advances,
     pendings,
+    allFunds: fnds,
+    funds,
     settings: settings
       ? {
           ...settings,

@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie'
-import { DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, LEGACY_PINS, type Advance, type Category, type Pending, type Settings, type Transaction } from './types'
+import { DEFAULT_ADMIN_PIN, DEFAULT_BANKS, DEFAULT_VIEWER_PIN, LEGACY_PINS, type Advance, type Category, type Fund, type Pending, type Settings, type Transaction } from './types'
 
 /**
  * Base de datos local (IndexedDB) — es la fuente de la verdad.
@@ -11,6 +11,7 @@ export class GeoCivDB extends Dexie {
   categories!: Table<Category, string>
   advances!: Table<Advance, string>
   pendings!: Table<Pending, string>
+  funds!: Table<Fund, string>
   settings!: Table<Settings, string>
 
   constructor() {
@@ -54,6 +55,15 @@ export class GeoCivDB extends Dexie {
       categories: 'id, account, scope, parentId, updatedAt, deleted',
       advances: 'id, account, updatedAt, deleted',
       pendings: 'id, account, updatedAt, deleted',
+      settings: 'id',
+    })
+    // v6: dinero disponible en efectivo y bancos (valores a mano, fuera del balance)
+    this.version(6).stores({
+      transactions: 'id, account, date, type, categoryId, updatedAt, deleted',
+      categories: 'id, account, scope, parentId, updatedAt, deleted',
+      advances: 'id, account, updatedAt, deleted',
+      pendings: 'id, account, updatedAt, deleted',
+      funds: 'id, account, updatedAt, deleted',
       settings: 'id',
     })
   }

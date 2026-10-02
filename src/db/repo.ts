@@ -1,6 +1,7 @@
 import { db, DEFAULT_SETTINGS, uid } from './database'
 import { requestSync } from '../lib/sync'
-import type { AccountId, Advance, Category, CategoryScope, PaymentMethod, Pending, Settings, Transaction, TxType } from './types'
+import { fundId } from '../lib/funds'
+import type { AccountId, Advance, Category, CategoryScope, Fund, FundKind, PaymentMethod, Pending, Settings, Transaction, TxType } from './types'
 
 export interface TxInput {
   account: AccountId
@@ -216,6 +217,52 @@ export async function deletePending(id: string): Promise<void> {
 /** Pendientes vivos: sin borrar y sin cobrar todavía. */
 export function livePendings() {
   return db.pendings.filter((p) => !p.deleted).toArray()
+}
+
+// ===== Dinero disponible (efectivo y bancos, escrito a mano) =====
+
+export interface FundInput {
+  kind: FundKind
+  name: string
+  /** null = valor vacío: se borra. */
+  amount: number | null
+}
+
+/**
+ * Guarda los valores de una cuenta. Solo toca las filas que cambiaron, para que
+ * "Actualizado el…" diga cuándo cambió de verdad cada valor.
+ */
+export async function saveFunds(account: AccountId, entries: FundInput[]): Promise<number> {
+  const now = Date.now()
+  const rows: Fund[] = []
+  for (const e of entries) {
+    const id = fundId(account, e.kind, e.name)
+    const current = await db.funds.get(id)
+    const alive = current && !current.deleted
+    if (e.amount === null) {
+      if (alive) rows.push({ ...current, deleted: true, updatedAt: now })
+    } else if (!alive || current.amount !== e.amount) {
+      rows.push({
+        id,
+        account,
+        kind: e.kind,
+        name: e.name.trim(),
+        amount: e.amount,
+        createdAt: current?.createdAt ?? now,
+        updatedAt: now,
+        deleted: false,
+      })
+    }
+  }
+  if (rows.length) {
+    await db.funds.bulkPut(rows)
+    requestSync()
+  }
+  return rows.length
+}
+
+export function liveFunds() {
+  return db.funds.filter((f) => !f.deleted).toArray()
 }
 
 // ===== Borrado total (para volver a importar desde cero) =====

@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import type { Advance, Category, Pending, Settings, Transaction } from '../db/types'
+import type { Advance, Category, Fund, Pending, Settings, Transaction } from '../db/types'
 import type { Range } from './dates'
 import { fmtDate } from './dates'
 import { formatMoney } from './money'
@@ -462,14 +462,15 @@ export async function exportReportExcel(
 
 export interface BackupFile {
   app: 'geociv-cuentas'
-  /** 1 = solo movimientos y secciones. 2 = incluye adelantos y saldos por cobrar. */
-  version: 1 | 2
+  /** 1 = solo movimientos y secciones. 2 = incluye adelantos y saldos por cobrar. 3 = incluye dinero disponible. */
+  version: 1 | 2 | 3
   exportedAt: string
   settings: Settings | undefined
   categories: Category[]
   transactions: Transaction[]
   advances?: Advance[]
   pendings?: Pending[]
+  funds?: Fund[]
 }
 
 export function exportBackup(
@@ -478,16 +479,18 @@ export function exportBackup(
   settings: Settings | undefined,
   pendings: Pending[] = [],
   advances: Advance[] = [],
+  funds: Fund[] = [],
 ): void {
   const data: BackupFile = {
     app: 'geociv-cuentas',
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     settings,
     categories,
     transactions,
     advances,
     pendings,
+    funds,
   }
   triggerDownload(
     new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),

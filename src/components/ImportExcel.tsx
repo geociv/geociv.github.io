@@ -8,7 +8,7 @@ import { fmtDate } from '../lib/dates'
 import { IconDownload, IconFolder, IconUpload, IconWallet } from './Icons'
 
 export function ImportExcel() {
-  const { settings, allTransactions, allCategories, allPendings, allAdvances } = useAppData()
+  const { settings, allTransactions, allCategories, allPendings, allAdvances, allFunds } = useAppData()
   const fileRef = useRef<HTMLInputElement>(null)
   const [account, setAccount] = useState<AccountId>('oficina')
   const [dayFirst, setDayFirst] = useState(true)
@@ -277,7 +277,7 @@ export function ImportExcel() {
 
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances)}
+              onClick={() => exportBackup(allTransactions, allCategories, settings, allPendings, allAdvances, allFunds)}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium hover:bg-slate-100 dark:border-navy-600 dark:hover:bg-white/5"
             >
               Respaldar antes

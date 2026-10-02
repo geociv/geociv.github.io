@@ -78,9 +78,10 @@ Genera la carpeta `dist/` con archivos estáticos. Formas de entregarla al clien
    create index if not exists idx_cat_ws_updated on categories (workspace, "updatedAt");
    ```
 
-   Y las dos tablas auxiliares (adelantos a trabajadores y saldos por cobrar).
-   Si no se crean, la app funciona igual pero esos dos registros **no se
-   sincronizan** entre la PC y el celular: se quedan en cada dispositivo.
+   Y las tablas auxiliares (adelantos a trabajadores, saldos por cobrar y
+   dinero disponible). Si no se crean, la app funciona igual pero esos
+   registros **no se sincronizan** entre la PC y el celular: se quedan en cada
+   dispositivo.
 
    ```sql
    create table if not exists advances (
@@ -113,8 +114,21 @@ Genera la carpeta `dist/` con archivos estáticos. Formas de entregarla al clien
      deleted boolean default false
    );
 
+   create table if not exists funds (
+     id text primary key,
+     workspace text not null,
+     account text not null,
+     kind text not null,
+     name text not null,
+     amount numeric not null,
+     "createdAt" bigint not null,
+     "updatedAt" bigint not null,
+     deleted boolean default false
+   );
+
    create index if not exists idx_adv_ws_updated on advances (workspace, "updatedAt");
    create index if not exists idx_pend_ws_updated on pendings (workspace, "updatedAt");
+   create index if not exists idx_funds_ws_updated on funds (workspace, "updatedAt");
    ```
 
    > **Importante:** Supabase activa RLS por su cuenta en las tablas nuevas, y
@@ -126,6 +140,7 @@ Genera la carpeta `dist/` con archivos estáticos. Formas de entregarla al clien
    > ```sql
    > create policy "acceso app" on advances for all to anon, authenticated using (true) with check (true);
    > create policy "acceso app" on pendings for all to anon, authenticated using (true) with check (true);
+   > create policy "acceso app" on funds for all to anon, authenticated using (true) with check (true);
    > ```
 
 3. Habilitar **RLS** en ambas tablas con una política sencilla (o mantenerlas sin RLS para uso interno con la anon key). Para un solo cliente, lo más simple es una política que permita todo con la anon key.
@@ -163,7 +178,9 @@ src/
 - **Adelantos a trabajadores**: se llevan aparte y no afectan el balance.
 - **Saldos por cobrar**: cuando se cobra un abono inicial (ej. 50%), el resto queda anotado sin sumar al balance.
   Al cobrarlo se registra el ingreso real y el pendiente se liquida. El total aparece en el tablero y en los reportes.
-- **Respaldo / restauración** completa en archivo JSON (incluye adelantos y saldos por cobrar).
+- **Dinero disponible**: cuánto hay en efectivo y en cada banco, por cuenta. Son valores escritos a mano
+  (no se calculan con los movimientos ni se suman al balance); se modifican desde la tarjeta del tablero.
+- **Respaldo / restauración** completa en archivo JSON (incluye adelantos, saldos por cobrar y dinero disponible).
 - **Importación desde Excel** de movimientos históricos (ver abajo).
 - **Borrar todos los datos** (Ajustes) para volver a importar desde cero: descarga un respaldo antes y el borrado se sincroniza a todos los dispositivos.
 - Sincronización opcional en la nube.
